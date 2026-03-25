@@ -1,0 +1,12 @@
+# CLIProxyAPI sidecar configuration
+# See https://help.router-for-me/configuration/options
+
+# Client API keys for autodialectics to authenticate
+api-keys:
+  - "change-me-in-production"
+
+# Model routing
+default-model: "gpt-4.1-mini"
+
+# Listen address
+listen: ":8317"

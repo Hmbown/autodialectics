@@ -1,0 +1,25 @@
+services:
+  autodialectics:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./autodialectics.db:/app/autodialectics.db
+    environment:
+      - AUTODIALECTICS_CLIPROXY_BASE_URL=http://cli-proxy-api:8317
+      - AUTODIALECTICS_CLIPROXY_API_KEY=${CLI_PROXY_API_KEY:-}
+    depends_on:
+      - cli-proxy-api
+
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    ports:
+      - "8317:8317"
+    volumes:
+      - ./configs/cliproxyapi/config.yaml:/CLIProxyAPI/config.yaml
+      - cli-proxy-data:/CLIProxyAPI/data
+    command: ["/CLIProxyAPI/CLIProxyAPI"]
+
+volumes:
+  cli-proxy-data:

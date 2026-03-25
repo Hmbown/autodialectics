@@ -1,0 +1,5 @@
+{
+  "title": "Fix calculator division by zero",
+  "description": "The calculator.py function divide crashes on zero input. Fix it.",
+  "assets": [{"kind": "file", "location": "examples/code_fix/workspace/calculator.py", "label": "calculator.py"}]
+}

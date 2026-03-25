@@ -1,0 +1,10 @@
+cliproxy_base_url: "http://127.0.0.1:8642"
+cliproxy_api_key: ""
+db_path: "autodialectics.db"
+artifacts_dir: "artifacts"
+benchmark_dir: "benchmarks/cases"
+use_dspy_rlm: false
+dspy_api_base: null
+dspy_api_key: null
+rlm_threshold_chars: 8000
+max_evidence_items: 20

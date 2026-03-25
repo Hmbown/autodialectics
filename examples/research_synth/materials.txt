@@ -1,0 +1,16 @@
+Attention Is All You Need (Vaswani et al., 2017)
+- Introduces the Transformer architecture
+- Self-attention computes relationships between all positions in a sequence
+- Multi-head attention allows the model to attend to different representation subspaces
+- Scaled dot-product attention: Attention(Q,K,V) = softmax(QK^T / sqrt(d_k)) V
+- Positional encoding injects sequence order information since attention is permutation-invariant
+
+Linformer (Wang et al., 2020)
+- Projects keys and values to low-rank approximations
+- Reduces self-attention complexity from O(n^2) to O(n)
+- Trade-off between efficiency and expressiveness
+
+Reformer (Kitaev et al., 2020)
+- Uses locality-sensitive hashing (LSH) for efficient attention
+- Reversible layers reduce memory usage
+- Enables training on longer sequences

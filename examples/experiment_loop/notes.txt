@@ -1,0 +1,6 @@
+Prompt Strategy A (baseline): "Answer the following question accurately."
+Prompt Strategy B (challenger): "Think step by step. Answer the following question accurately. Verify your answer before responding."
+
+We want to test whether chain-of-thought prompting improves accuracy on math word problems.
+Dataset: GSM8K (grade school math)
+Metric: accuracy on 500 held-out examples

@@ -1,0 +1,29 @@
+Longer context document for testing recursive evidence gathering.
+This document discusses various attention mechanism variants and their trade-offs.
+
+Sparse Attention (Child et al., 2019)
+- Restricts each position to attend only to a subset of positions
+- Factorized self-attention patterns
+- Achieves O(n * sqrt(n)) complexity
+
+Linear Attention (Katharopoulos et al., 2020)
+- Removes softmax dependency to achieve true linear complexity
+- Uses kernel functions to approximate the attention matrix
+- Trade-off: less expressive but much faster
+
+Flash Attention (Dao et al., 2022)
+- IO-aware exact attention computation
+- Tiling and recomputation reduce memory reads/writes
+- No approximation - mathematically equivalent to standard attention
+- Significant speedup on modern GPUs
+
+Performer (Choromanski et al., 2021)
+- Uses random feature approximations (FAVOR+)
+- Linear complexity via kernel trick
+- Approximate but unbiased estimator
+
+Multi-Query Attention (Shazeer, 2019)
+- Shares key and value heads across attention heads
+- Only query heads are independent
+- Reduces KV cache size significantly
+- Used in PaLM and other large language models
