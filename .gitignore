@@ -17,4 +17,8 @@ autodialectics.yaml
 .coverage
 htmlcov/
 
+dist/
+tmp/
+PROMPT.md
+
 .DS_Store
