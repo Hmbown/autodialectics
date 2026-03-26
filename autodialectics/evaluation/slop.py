@@ -30,6 +30,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _has_unparsed_antithesis_objections(text: str) -> bool:
+    """Heuristically detect critique text when no structured objections were parsed."""
+    lowered = text.lower()
+    if not lowered.strip():
+        return False
+    return (
+        "claim being challenged" in lowered
+        or "specific objection" in lowered
+        or "**objection" in lowered
+        or "| severity |" in lowered
+        or "## objections" in lowered
+    )
+
+
 class SlopScorer:
     """Compute 12 slop sub-metrics and a weighted composite score."""
 
@@ -504,12 +518,18 @@ class RunEvaluator:
         groundedness = 1.0 - slop.unsupported_claims
 
         # Objection coverage: how many objections were addressed
+        parser_gap = (
+            not dialectic.objection_ledger
+            and _has_unparsed_antithesis_objections(dialectic.antithesis_summary)
+        )
         if dialectic.objection_ledger:
             addressed = sum(
                 1 for o in dialectic.objection_ledger
                 if o.accepted is not None
             )
             objection_coverage = addressed / len(dialectic.objection_ledger)
+        elif parser_gap:
+            objection_coverage = 0.0
         else:
             objection_coverage = 1.0  # No objections = no gap
 
@@ -569,6 +589,10 @@ class RunEvaluator:
         )
 
         notes: list[str] = []
+        if parser_gap:
+            notes.append(
+                "Antithesis contained objection text but no structured objections were parsed."
+            )
         if regression_vs_prior_champion > 0.1:
             notes.append(
                 f"Significant regression vs champion: {regression_vs_prior_champion:.2f}"

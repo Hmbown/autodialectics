@@ -66,12 +66,13 @@ class AutodialecticsRuntime:
             use_dspy_rlm=getattr(settings, "use_dspy_rlm", False),
             max_evidence_items=getattr(settings, "max_evidence_items", 20),
             rlm_threshold_chars=getattr(settings, "rlm_threshold_chars", 8000),
+            dspy_settings=settings,
         )
         self.planner = DialecticalPlanner(model_client=self.model_client)
         self.evaluator = RunEvaluator()
         self.gate = AdvanceGate()
         self.adapters = AdapterRegistry()
-        self.evolution = ChampionChallengerManager(self.store)
+        self.evolution = ChampionChallengerManager(self.store, settings=settings)
 
     # ── Shortcuts ─────────────────────────────────────────────────────
 
@@ -123,25 +124,25 @@ class AutodialecticsRuntime:
 
             # 2. Explore
             evidence = self.explorer.explore(contract)
-            self.artifacts.write_json(run_id, "evidence.json", evidence)
+            self._record_json_artifact(manifest, "evidence.json", evidence)
 
             # 3. Plan (dialectic)
             dialectic = self.planner.plan(contract, evidence, policy_surfaces)
-            self.artifacts.write_json(run_id, "dialectic.json", dialectic)
+            self._record_json_artifact(manifest, "dialectic.json", dialectic)
 
             # 4. Execute
             adapter = self.adapters.for_domain(contract.domain)
             execution = adapter.execute(
                 contract, evidence, dialectic, self.model_client, policy_surfaces
             )
-            self.artifacts.write_json(run_id, "execution.json", execution)
+            self._record_json_artifact(manifest, "execution.json", execution)
             manifest.adapter_name = adapter.name
 
             # 5. Verify
             verification = self.evaluator.verify(
                 contract, execution, evidence=evidence
             )
-            self.artifacts.write_json(run_id, "verification.json", verification)
+            self._record_json_artifact(manifest, "verification.json", verification)
 
             # 6. Evaluate
             # Get prior champion score for regression detection
@@ -156,7 +157,7 @@ class AutodialecticsRuntime:
                 evidence=evidence,
                 prior_champion_score=prior_score,
             )
-            self.artifacts.write_json(run_id, "evaluation.json", evaluation)
+            self._record_json_artifact(manifest, "evaluation.json", evaluation)
 
             # 7. Decide
             decision = self.gate.decide(verification, evaluation, prior_score)
@@ -172,7 +173,7 @@ class AutodialecticsRuntime:
                 contract, evidence, dialectic, execution, verification, evaluation, decision
             )
             manifest.summary = summary
-            self.artifacts.write_markdown(run_id, "summary.md", summary)
+            self._record_markdown_artifact(manifest, "summary.md", summary)
 
             # 9. Save benchmark if this is a benchmark run
             if benchmark_case:
@@ -180,8 +181,8 @@ class AutodialecticsRuntime:
                     run_id, benchmark_case, evaluation, verification
                 )
                 self.store.save_benchmark_report(run_id, benchmark_report)
-                self.artifacts.write_json(
-                    run_id, "benchmark_report.json", benchmark_report
+                self._record_json_artifact(
+                    manifest, "benchmark_report.json", benchmark_report
                 )
 
             ended_at = datetime.now(timezone.utc)
@@ -259,6 +260,17 @@ class AutodialecticsRuntime:
                         score,
                     )
 
+        benchmark_policy_id = policy_id
+        if benchmark_policy_id is None:
+            benchmark_policy_id = self.evolution.ensure_default_champion().policy_id
+
+        if benchmark_policy_id and records:
+            self._update_policy_benchmark_summary(
+                benchmark_policy_id,
+                records,
+                canary_passed=canary_passed,
+            )
+
         logger.info(
             "Benchmark complete: %d cases, canary_passed=%s",
             len(records),
@@ -284,41 +296,36 @@ class AutodialecticsRuntime:
         logger.info("Created challenger: %s", challenger.policy_id)
         return challenger.policy_id
 
-    def promote(self, challenger_id: str) -> RunRecord | None:
+    def promote(self, challenger_id: str) -> dict[str, Any] | None:
         """Promote a challenger to champion."""
-        # Get recent benchmark scores for comparison
-        reports = self.store.recent_benchmark_reports()
         challenger_data = self.store.get_policy(challenger_id)
         if not challenger_data:
             logger.error("Challenger %s not found", challenger_id)
             return None
 
         champion = self.evolution.ensure_default_champion()
+        challenger_summary = challenger_data.get("benchmark_summary", {})
 
         champion_score = champion.benchmark_summary.get("overall_score", 0.0)
-        challenger_score = challenger_data.get("benchmark_summary", {}).get(
-            "overall_score", 0.0
-        )
+        challenger_score = challenger_summary.get("overall_score", 0.0)
         champion_slop = champion.benchmark_summary.get("slop_composite", 0.5)
-        challenger_slop = challenger_data.get("benchmark_summary", {}).get(
-            "slop_composite", 0.5
-        )
+        challenger_slop = challenger_summary.get("slop_composite", 0.5)
+        canary_passed = challenger_summary.get("canary_passed", 0.0) >= 0.5
 
-        # Assume canary passed (would need actual canary run to confirm)
         decision = self.evolution.compare(
             champion_score,
             challenger_score,
             champion_slop,
             challenger_slop,
-            canary_passed=True,
+            canary_passed=canary_passed,
         )
 
         if decision.promote:
             promoted = self.evolution.promote(challenger_id, decision)
             logger.info("Promoted %s to champion", challenger_id)
-        else:
-            logger.info("Promotion denied: %s", decision.rationale)
+            return promoted.model_dump(mode="json")
 
+        logger.info("Promotion denied: %s", decision.rationale)
         return None
 
     def rollback(self) -> str:
@@ -370,6 +377,54 @@ class AutodialecticsRuntime:
         )
 
     # ── Internal helpers ──────────────────────────────────────────────
+
+    def _record_json_artifact(
+        self,
+        manifest: RunManifest,
+        name: str,
+        data: Any,
+    ) -> str:
+        """Write a JSON artifact and persist its path on the manifest and in SQLite."""
+        path = self.artifacts.write_json(manifest.run_id, name, data)
+        path_str = str(path)
+        manifest.artifact_paths[name] = path_str
+        self.store.save_artifact_path(manifest.run_id, name, path_str)
+        return path_str
+
+    def _record_markdown_artifact(
+        self,
+        manifest: RunManifest,
+        name: str,
+        text: str,
+    ) -> str:
+        """Write a markdown artifact and persist its path on the manifest and in SQLite."""
+        path = self.artifacts.write_markdown(manifest.run_id, name, text)
+        path_str = str(path)
+        manifest.artifact_paths[name] = path_str
+        self.store.save_artifact_path(manifest.run_id, name, path_str)
+        return path_str
+
+    def _update_policy_benchmark_summary(
+        self,
+        policy_id: str,
+        records: list[RunRecord],
+        *,
+        canary_passed: bool,
+    ) -> None:
+        """Persist aggregate benchmark results onto the policy that was benchmarked."""
+        policy_data = self.store.get_policy(policy_id)
+        if policy_data is None or not records:
+            return
+
+        count = len(records)
+        policy_data["benchmark_summary"] = {
+            "overall_score": sum(r.overall_score for r in records) / count,
+            "slop_composite": sum(r.slop_composite for r in records) / count,
+            "accepted_rate": sum(1.0 for r in records if r.decision == AdvanceAction.ACCEPT.value) / count,
+            "run_count": float(count),
+            "canary_passed": 1.0 if canary_passed else 0.0,
+        }
+        self.store.save_policy(policy_data)
 
     def _render_summary(
         self,
@@ -481,7 +536,9 @@ class AutodialecticsRuntime:
             "run_id": run_id,
             "case_id": case.case_id,
             "is_canary": case.is_canary,
+            "submission": case.submission.model_dump(mode="json"),
             "overall_score": evaluation.overall_score,
+            "slop": evaluation.slop.model_dump(mode="json"),
             "slop_composite": evaluation.slop.composite,
             "task_success": evaluation.task_success,
             "groundedness": evaluation.groundedness,

@@ -25,6 +25,7 @@ def _candidate_config_paths(config_path: str | None = None) -> list[Path]:
 class Settings(BaseModel):
     cliproxy_base_url: str = "http://127.0.0.1:8642"
     cliproxy_api_key: str = ""
+    cliproxy_model: str = "default"
     db_path: str = "autodialectics.db"
     artifacts_dir: str = "artifacts"
     benchmark_dir: str = "benchmarks/cases"

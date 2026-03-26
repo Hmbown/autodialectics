@@ -58,6 +58,7 @@ Typical local config:
 ```yaml
 cliproxy_base_url: "http://127.0.0.1:8642"
 cliproxy_api_key: ""
+cliproxy_model: "default"
 db_path: "autodialectics.db"
 artifacts_dir: "artifacts"
 benchmark_dir: "benchmarks/cases"
@@ -86,14 +87,20 @@ Implemented and exercised
 - heuristic challenger creation
 
 Implemented but capability-gated
-- DSPy RLM exploration path
+- DSPy recursive language-model exploration path
 - DSPy GEPA optimization path
 
 Important caveat on DSPy paths
 - These paths are real code paths, not marketing copy.
 - They are also optional and environment-dependent.
 - If DSPy is unavailable or fails, the system falls back to heuristic exploration or heuristic challenger mutation.
+- DSPy RLM here means recursive language-model exploration over long context, not a plain retrieval-only pass.
+- Current automated tests verify fallback and capability-gating behavior for DSPy paths; they do not yet prove a fully configured positive-path DSPy runtime in CI.
+- `dspy_api_base` and `dspy_api_key` can override the DSPy endpoint, but the default positive path now routes DSPy through the configured OpenAI-compatible `cliproxy` endpoint.
 - The current GEPA implementation is intentionally conservative and should be described as experimental rather than production-hardened optimization.
+
+Reference architecture
+- See `docs/reference_flow.md` for the mermaid reference flow covering routing, recursive evidence exploration, dialectics, execution, verification, storage, benchmarking, and champion/challenger evolution.
 
 Installation
 ```bash

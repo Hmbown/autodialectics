@@ -6,11 +6,14 @@ Autodialectics is an anti-slop agentic operating system that wraps any LLM in a 
 
 The core pipeline processes every task through these sequential stages:
 
+Reference flow
+- See `docs/reference_flow.md` for the mermaid reference diagram that includes routing, DSPy RLM, dialectics, verification, storage, benchmarking, and evolution.
+
 ### 1. Contract Compilation
 A `TaskSubmission` (title + description + optional constraints/objectives) is compiled into an immutable `TaskContract`. The compiler infers the task domain (CODE, RESEARCH, WRITING, EXPERIMENT, ANALYSIS, GENERIC) from keywords, normalizes deliverables and acceptance criteria from domain-specific defaults, and produces a SHA-256 source hash for immutability verification.
 
 ### 2. Evidence Exploration
-Assets attached to the task (files, inline text, directories) are loaded and chunked. The `ContextExplorer` builds an `EvidenceBundle` by scoring chunks against exploration queries using keyword-overlap heuristics, or via DSPy RLM for longer contexts (>8000 chars).
+Assets attached to the task (files, inline text, directories) are loaded and chunked. The `ContextExplorer` builds an `EvidenceBundle` by scoring chunks against exploration queries using keyword-overlap heuristics, or via DSPy-guided recursive language-model exploration for longer contexts (>8000 chars).
 
 ### 3. Dialectical Planning
 The `DialecticalPlanner` generates a three-phase dialectic:

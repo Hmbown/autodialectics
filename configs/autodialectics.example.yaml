@@ -1,5 +1,6 @@
 cliproxy_base_url: "http://127.0.0.1:8642"
 cliproxy_api_key: ""
+cliproxy_model: "default"
 db_path: "autodialectics.db"
 artifacts_dir: "artifacts"
 benchmark_dir: "benchmarks/cases"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -292,6 +293,11 @@ def serve(
 ) -> None:
     """Start the API server."""
     import uvicorn
+
+    ctx = click.get_current_context(silent=True)
+    config_path = (ctx.obj or {}).get("config_path") if ctx is not None else None
+    if config_path:
+        os.environ["AUTODIALECTICS_CONFIG"] = str(config_path)
 
     console.print(f"[bold blue]Starting server on {host}:{port}[/bold blue]")
     uvicorn.run(

@@ -1,0 +1,37 @@
+{
+  "title": "Review the autodialectics project against its own architecture",
+  "description": "Use the repository itself as evidence and assess the runtime, recursive language model exploration, dialectical planning, verification, and evolution flow.",
+  "domain": "research",
+  "objectives": [
+    "Inspect the contract, exploration, dialectic, execution, evaluation, routing, and evolution code paths.",
+    "Explain where the current implementation matches or diverges from the target autodialectic process.",
+    "Ground all findings in repository evidence and acknowledge environment-dependent behavior."
+  ],
+  "constraints": [
+    "Ground claims in the provided repository assets only.",
+    "Do not invent tests, logs, files, or benchmark outcomes.",
+    "Explicitly separate confirmed behavior from inference."
+  ],
+  "acceptance_criteria": [
+    "The output references recursive language-model exploration, dialectical planning, and GEPA evolution.",
+    "The output distinguishes grounded facts from inferences.",
+    "The run completes without raising an exception."
+  ],
+  "assets": [
+    {
+      "kind": "file",
+      "location": "README.md",
+      "label": "README.md"
+    },
+    {
+      "kind": "file",
+      "location": "docs/reference_flow.md",
+      "label": "docs/reference_flow.md"
+    },
+    {
+      "kind": "directory",
+      "location": "autodialectics",
+      "label": "autodialectics/"
+    }
+  ]
+}

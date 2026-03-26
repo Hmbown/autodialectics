@@ -92,8 +92,23 @@ def test_benchmark_cases_load(tmp_path: Path) -> None:
 
 
 def test_benchmark_smoke(runtime, tmp_path: Path) -> None:
-    """Benchmark runner should complete with offline model."""
+    """Benchmark runner should complete with offline model and persist benchmark metadata."""
     records = runtime.benchmark()
     assert len(records) > 0
     for record in records:
         assert record.run_id
+
+    champion = runtime.evolution.ensure_default_champion()
+    summary = champion.benchmark_summary
+    assert summary["run_count"] == float(len(records))
+    assert 0.0 <= summary["overall_score"] <= 1.0
+    assert 0.0 <= summary["slop_composite"] <= 1.0
+    assert summary["canary_passed"] in {0.0, 1.0}
+
+    reports = runtime.store.recent_benchmark_reports()
+    assert reports
+    latest_report = reports[0]
+    assert "submission" in latest_report
+    assert latest_report["submission"]["title"]
+    assert "slop" in latest_report
+    assert isinstance(latest_report["slop"], dict)

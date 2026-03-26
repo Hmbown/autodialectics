@@ -10,6 +10,19 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_REQUEST_FAILURE_PREFIX = "[LLM REQUEST FAILED]"
+_OFFLINE_PREFIX = "[OFFLINE MODE]"
+
+
+def is_request_failure_response_text(content: str) -> bool:
+    """Return True when content encodes an explicit upstream request failure."""
+    return content.strip().startswith(_REQUEST_FAILURE_PREFIX)
+
+
+def is_offline_response_text(content: str) -> bool:
+    """Return True when content comes from the offline fallback client."""
+    return content.strip().startswith(_OFFLINE_PREFIX)
+
 
 @dataclass
 class ModelResponse:
@@ -28,9 +41,15 @@ class ModelClient:
     Falls back to canned responses when offline.
     """
 
-    def __init__(self, base_url: str, api_key: str = "") -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str = "",
+        model: str = "default",
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.model = model or "default"
         self._timeout = 120.0
 
     @property
@@ -80,7 +99,7 @@ class ModelClient:
         messages.append({"role": "user", "content": user_prompt})
 
         payload: dict[str, Any] = {
-            "model": "default",
+            "model": self.model,
             "messages": messages,
             "temperature": 0.7,
         }
@@ -122,7 +141,10 @@ class ModelClient:
             logger.debug(
                 "[%s] Connection failed to %s: %s", role, self.base_url, exc
             )
-            return self._offline_response(role)
+            return self._failure_response(
+                role,
+                reason=f"Connection to configured endpoint failed: {self.base_url}",
+            )
         except httpx.HTTPStatusError as exc:
             logger.debug(
                 "[%s] HTTP error from %s: %s %s",
@@ -131,21 +153,43 @@ class ModelClient:
                 exc.response.status_code,
                 exc.response.text[:200],
             )
-            return self._offline_response(role)
+            return self._failure_response(
+                role,
+                reason=(
+                    f"Configured endpoint returned HTTP {exc.response.status_code}: "
+                    f"{self.base_url}"
+                ),
+            )
         except Exception as exc:
             logger.debug(
                 "[%s] Unexpected error calling LLM: %s", role, exc
             )
-            return self._offline_response(role)
+            return self._failure_response(
+                role,
+                reason=f"Configured endpoint request failed: {type(exc).__name__}",
+            )
 
     @staticmethod
     def _offline_response(role: str) -> ModelResponse:
         """Return a canned response for offline mode."""
         return ModelResponse(
             content=(
-                f"[OFFLINE MODE] No LLM endpoint configured. "
+                f"{_OFFLINE_PREFIX} No LLM endpoint configured. "
                 f"Role: {role}. "
                 f"The system is operating in heuristic-only mode."
+            ),
+            role="assistant",
+        )
+
+    @staticmethod
+    def _failure_response(role: str, reason: str) -> ModelResponse:
+        """Return an explicit request-failure response for a configured endpoint."""
+        return ModelResponse(
+            content=(
+                f"{_REQUEST_FAILURE_PREFIX} {reason}. "
+                f"Role: {role}. "
+                f"The system fell back because the configured endpoint did not "
+                f"produce a usable response."
             ),
             role="assistant",
         )
@@ -155,7 +199,7 @@ class OfflineModelClient(ModelClient):
     """A ModelClient that always returns offline responses."""
 
     def __init__(self) -> None:
-        super().__init__(base_url="offline")
+        super().__init__(base_url="offline", model="offline")
 
     @property
     def offline(self) -> bool:
@@ -187,9 +231,10 @@ def build_model_client(settings: Any) -> ModelClient:
     """
     base_url = getattr(settings, "cliproxy_base_url", "")
     api_key = getattr(settings, "cliproxy_api_key", "")
+    model = getattr(settings, "cliproxy_model", "default")
 
     if not base_url:
         logger.info("No cliproxy_base_url configured; using offline client")
         return OfflineModelClient()
 
-    return ModelClient(base_url=base_url, api_key=api_key)
+    return ModelClient(base_url=base_url, api_key=api_key, model=model)

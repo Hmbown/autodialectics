@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from autodialectics.routing.cliproxy import is_request_failure_response_text
 from autodialectics.schemas import (
     AdvanceAction,
     DialecticArtifact,
@@ -18,6 +20,19 @@ if TYPE_CHECKING:
     from autodialectics.schemas import EvidenceBundle, TaskContract
 
 logger = logging.getLogger(__name__)
+
+_CLAIM_LINE_RE = re.compile(
+    r"^(?:#+\s*)?(?:\d+[.)]\s*)?(?:claim(?: being challenged)?|objection to)\s*:\s*(.+)$",
+    re.IGNORECASE,
+)
+_OBJECTION_LINE_RE = re.compile(
+    r"^(?:#+\s*)?(?:\*\*)?objection(?:\*\*)?\s*:?\s*(.*)$",
+    re.IGNORECASE,
+)
+_SEVERITY_LINE_RE = re.compile(
+    r"^(?:#+\s*)?(?:\*\*)?severity(?:\*\*)?\s*:\s*([0-9.]+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -61,12 +76,29 @@ class DialecticalPlanner:
 
         if self.model_client and not self.model_client.offline:
             thesis = self._llm_thesis(contract, evidence, thesis_prompt)
-            antithesis = self._llm_antithesis(
-                contract, evidence, thesis, antithesis_prompt
-            )
-            artifact = self._llm_synthesis(
-                contract, evidence, thesis, antithesis, synthesis_prompt
-            )
+            if is_request_failure_response_text(thesis[0]):
+                logger.warning(
+                    "Planner thesis request failed; falling back to heuristic plan"
+                )
+                artifact = self._heuristic_plan(contract, evidence)
+            else:
+                antithesis = self._llm_antithesis(
+                    contract, evidence, thesis, antithesis_prompt
+                )
+                if is_request_failure_response_text(antithesis[0]):
+                    logger.warning(
+                        "Planner antithesis request failed; falling back to heuristic plan"
+                    )
+                    artifact = self._heuristic_plan(contract, evidence)
+                else:
+                    artifact = self._llm_synthesis(
+                        contract, evidence, thesis, antithesis, synthesis_prompt
+                    )
+                    if is_request_failure_response_text(artifact.synthesis):
+                        logger.warning(
+                            "Planner synthesis request failed; falling back to heuristic plan"
+                        )
+                        artifact = self._heuristic_plan(contract, evidence)
         else:
             artifact = self._heuristic_plan(contract, evidence)
 
@@ -135,56 +167,58 @@ class DialecticalPlanner:
         summary = resp.content
 
         objections: list[ObjectionRecord] = []
-        lines = summary.splitlines()
         current_claim = ""
         current_objection = ""
         current_severity = 0.5
+        collecting_objection = False
 
-        for line in lines:
-            line = line.strip()
-            if not line:
+        def flush_current() -> None:
+            nonlocal current_claim, current_objection, current_severity, collecting_objection
+            if current_claim and current_objection:
+                objections.append(
+                    ObjectionRecord(
+                        claim=current_claim.strip(),
+                        objection=current_objection.strip(),
+                        severity=current_severity,
+                    )
+                )
+            current_claim = ""
+            current_objection = ""
+            current_severity = 0.5
+            collecting_objection = False
+
+        for raw_line in summary.splitlines():
+            line = raw_line.strip()
+            if not line or line == "---":
                 continue
-            if line.lower().startswith(("claim:", "objection to:")):
-                if current_claim and current_objection:
-                    objections.append(
-                        ObjectionRecord(
-                            claim=current_claim,
-                            objection=current_objection,
-                            severity=current_severity,
-                        )
-                    )
-                current_claim = line.split(":", 1)[1].strip()
-                current_objection = ""
-                current_severity = 0.5
-            elif line.lower().startswith("objection:"):
-                if current_claim and current_objection:
-                    objections.append(
-                        ObjectionRecord(
-                            claim=current_claim,
-                            objection=current_objection,
-                            severity=current_severity,
-                        )
-                    )
-                current_objection = line.split(":", 1)[1].strip()
-                current_claim = ""
-            elif line.lower().startswith("severity:"):
+
+            claim_match = _CLAIM_LINE_RE.match(line)
+            if claim_match:
+                flush_current()
+                current_claim = claim_match.group(1).strip()
+                continue
+
+            objection_match = _OBJECTION_LINE_RE.match(line)
+            if objection_match and current_claim:
+                objection_text = objection_match.group(1).strip()
+                current_objection = objection_text
+                collecting_objection = True
+                continue
+
+            severity_match = _SEVERITY_LINE_RE.match(line)
+            if severity_match and current_claim:
                 try:
-                    current_severity = float(
-                        line.split(":", 1)[1].strip().rstrip(".")
-                    )
+                    current_severity = float(severity_match.group(1).rstrip("."))
                 except ValueError:
                     pass
-            else:
-                current_objection += " " + line
+                continue
 
-        if current_claim and current_objection:
-            objections.append(
-                ObjectionRecord(
-                    claim=current_claim,
-                    objection=current_objection,
-                    severity=current_severity,
-                )
-            )
+            if collecting_objection and current_claim:
+                clean_line = line.strip("* ")
+                if clean_line:
+                    current_objection = f"{current_objection} {clean_line}".strip()
+
+        flush_current()
 
         return summary, objections
 
@@ -206,12 +240,13 @@ class DialecticalPlanner:
             "objection explicitly."
         )
         obj_text = "\n".join(
-            f"- [{o.severity:.1f}] {o.objection}" for o in objections
+            f"- [{o.severity:.1f}] {o.claim}: {o.objection}" for o in objections
         )
+        objections_block = obj_text or antithesis_text
         user = (
             f"Task: {contract.title}\n\n"
             f"Original plan:\n{thesis_text}\n\n"
-            f"Objections:\n{obj_text}\n\n"
+            f"Objections:\n{objections_block}\n\n"
             f"Instructions: {prompt_template}\n\n"
             f"Output a revised step-by-step plan that addresses all objections."
         )

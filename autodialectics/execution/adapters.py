@@ -20,6 +20,8 @@ from autodialectics.schemas import (
     TaskContract,
 )
 
+from autodialectics.routing.cliproxy import is_request_failure_response_text
+
 if TYPE_CHECKING:
     from autodialectics.routing.cliproxy import ModelClient
 
@@ -543,6 +545,18 @@ def _parse_response(
     content: str, *, domain: str | None = None
 ) -> ExecutionArtifact:
     """Parse model response into an ExecutionArtifact."""
+    if is_request_failure_response_text(content):
+        return ExecutionArtifact(
+            summary=content,
+            output_text=content,
+            tool_log=["Executor request failed before producing a usable response."],
+            declared_uncertainties=[
+                "Configured LLM endpoint request failed; execution artifact may be incomplete."
+            ],
+            structured_output={"llm_request_failed": True, "domain": domain or "generic"},
+            status="failed",
+        )
+
     patches: list[str] = []
     test_results: list[str] = []
     created_files: list[str] = []
