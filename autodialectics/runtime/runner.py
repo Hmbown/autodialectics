@@ -502,15 +502,16 @@ class AutodialecticsRuntime:
         """Score a benchmark case against expectations."""
         expect = case.expectation
         score = 1.0
+        benchmark_text = self._benchmark_text(record).lower()
 
         # Check must_include
         for phrase in expect.must_include:
-            if phrase not in record.summary and phrase not in (record.summary or ""):
+            if phrase.lower() not in benchmark_text:
                 score -= 0.2
 
         # Check must_not_include
         for phrase in expect.must_not_include:
-            if phrase in record.summary or phrase in (record.summary or ""):
+            if self._contains_forbidden_benchmark_phrase(benchmark_text, phrase.lower()):
                 score -= 0.2
 
         # Check groundedness
@@ -523,6 +524,48 @@ class AutodialecticsRuntime:
         # (Approximate; would need full evaluation record)
 
         return max(0.0, min(score, 1.0))
+
+    def _benchmark_text(self, record: RunRecord) -> str:
+        """Load the richest available text for benchmark phrase checks."""
+        text_parts = [record.summary or ""]
+        run_dir = self.artifacts.base / record.run_id
+
+        execution_path = run_dir / "execution.json"
+        if execution_path.is_file():
+            try:
+                payload = json.loads(execution_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                text_parts.append(str(payload.get("summary", "")))
+                text_parts.append(str(payload.get("output_text", "")))
+
+        summary_path = run_dir / "summary.md"
+        if summary_path.is_file():
+            text_parts.append(summary_path.read_text(encoding="utf-8"))
+
+        return "\n".join(part for part in text_parts if part)
+
+    def _contains_forbidden_benchmark_phrase(self, text: str, phrase: str) -> bool:
+        """Return True only when a forbidden phrase is used positively, not quoted as a warning."""
+        windows = [segment.strip() for segment in text.splitlines() if segment.strip()]
+        ignore_markers = (
+            "must_not_include",
+            "avoid",
+            "discourag",
+            "do not use",
+            "do not claim",
+            "certainty markers such as",
+            "include terms like",
+        )
+        for window in windows:
+            lowered = window.lower()
+            if phrase not in lowered:
+                continue
+            if any(marker in lowered for marker in ignore_markers):
+                continue
+            return True
+        return False
 
     def _build_benchmark_report(
         self,

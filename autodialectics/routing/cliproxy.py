@@ -50,7 +50,7 @@ class ModelClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model or "default"
-        self._timeout = 120.0
+        self._timeout = 600.0
 
     @property
     def offline(self) -> bool:

@@ -74,6 +74,27 @@ Hermes compatibility notes
 - If the endpoint is unavailable, Autodialectics falls back to heuristic/offline behavior instead of pretending the model call succeeded.
 - A local live smoke test against the Hermes API path is included as an optional integration test.
 
+Alternative local gateways
+- `claude-gateway` exposes the Claude CLI as an OpenAI-compatible `/v1/chat/completions` server.
+- `codex-gateway` exposes `codex exec` the same way, which is useful when you want Autodialectics to use the Codex CLI as the backend model route.
+- `cli-gateway` auto-detects the active local CLI environment and routes to `codex`, `claude`, or `hermes`. Set `CLI_GATEWAY_PROVIDER=codex|claude|hermes|auto` to override detection.
+
+Example Codex gateway flow
+```bash
+uv run codex-gateway
+```
+
+Example auto-detecting gateway flow
+```bash
+uv run cli-gateway
+```
+
+Then point Autodialectics at it:
+```yaml
+cliproxy_base_url: "http://127.0.0.1:8642"
+cliproxy_model: "gpt-5.4-mini"
+```
+
 What is real vs optional
 Implemented and exercised
 - contract compiler

@@ -141,6 +141,24 @@ _DOMAIN_KEYWORDS: dict[TaskDomain, list[str]] = {
     ],
 }
 
+_DOMAIN_STRONG_KEYWORDS: dict[TaskDomain, list[str]] = {
+    TaskDomain.CODE: [
+        "implement", "refactor", "debug", "fix", "patch",
+    ],
+    TaskDomain.RESEARCH: [
+        "research", "literature", "citation", "paper", "journal", "survey",
+    ],
+    TaskDomain.WRITING: [
+        "write", "draft", "revise", "edit", "proofread",
+    ],
+    TaskDomain.EXPERIMENT: [
+        "experiment", "trial", "simulation", "ablation", "data collection",
+    ],
+    TaskDomain.ANALYSIS: [
+        "analyze", "analysis", "evaluate", "assess", "investigate", "audit",
+    ],
+}
+
 
 class ContractCompiler:
     """Compile a TaskSubmission into a normalized TaskContract."""
@@ -163,8 +181,13 @@ class ContractCompiler:
         for domain, keywords in _DOMAIN_KEYWORDS.items():
             if domain == TaskDomain.GENERIC:
                 continue
-            hits = sum(1 for kw in keywords if kw in text)
-            score = hits / len(keywords) if keywords else 0
+            strong_keywords = _DOMAIN_STRONG_KEYWORDS.get(domain, [])
+            strong_hits = sum(1 for kw in strong_keywords if kw in text)
+            weak_hits = sum(
+                1 for kw in keywords
+                if kw not in strong_keywords and kw in text
+            )
+            score = strong_hits * 3 + weak_hits
             if score > best_score:
                 best_score = score
                 best_domain = domain
