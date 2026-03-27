@@ -184,6 +184,14 @@ API endpoints
 - POST /policies/{policy_id}/promote
 - POST /policies/rollback
 
+AI assistant integrations
+- Codex: repo-local marketplace at `.agents/plugins/marketplace.json` and plugin files under `plugins/autodialectics/`
+- Claude Code: local marketplace at `claude-marketplace/.claude-plugin/marketplace.json`
+- OpenCode: project config at `opencode.json` plus local files under `.opencode/`
+- Shared backend: all three surfaces use the same MCP entrypoint, `uv run autodialectics-mcp`
+- Validation guide: `docs/ai-plugin-integrations.md`
+- Verification prompt for another agent: `test.md`
+
 Testing
 Run the full suite:
 ```bash

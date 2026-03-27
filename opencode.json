@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "docs/ai-plugin-integrations.md"
+  ],
+  "mcp": {
+    "autodialectics": {
+      "type": "local",
+      "command": [
+        "bash",
+        "-lc",
+        "repo_root=\"${AUTODIALECTICS_REPO_ROOT:-$PWD}\" && cd \"$repo_root\" && uv run autodialectics-mcp"
+      ]
+    }
+  }
+}

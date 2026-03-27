@@ -1,0 +1,41 @@
+{
+  "name": "autodialectics",
+  "version": "0.1.0",
+  "description": "Run the local Autodialectics anti-slop harness from Codex through reusable skills and repo-aware workflows.",
+  "author": {
+    "name": "Hmbown",
+    "url": "https://github.com/Hmbown"
+  },
+  "homepage": "https://github.com/Hmbown/autodialectics",
+  "repository": "https://github.com/Hmbown/autodialectics",
+  "license": "MIT",
+  "keywords": [
+    "agentic",
+    "evaluation",
+    "benchmarking",
+    "anti-slop",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Autodialectics",
+    "shortDescription": "Run the repo's anti-slop harness from Codex",
+    "longDescription": "Adds a repo-local Codex plugin for compiling tasks, executing anti-slop runs, inspecting artifacts, benchmarking policies, and evolving champions with the existing Autodialectics CLI.",
+    "developerName": "Hmbown",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Hmbown/autodialectics",
+    "privacyPolicyURL": "https://github.com/Hmbown/autodialectics/blob/main/LICENSE",
+    "termsOfServiceURL": "https://github.com/Hmbown/autodialectics/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Use Autodialectics to compile and run a task from this repo.",
+      "Benchmark the current Autodialectics policy and summarize the results.",
+      "Inspect a prior Autodialectics run and explain the gate decision."
+    ],
+    "brandColor": "#1F4B99"
+  }
+}
