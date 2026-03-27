@@ -1,0 +1,11 @@
+{
+  "name": "autodialectics",
+  "description": "Run the local Autodialectics anti-slop harness from Claude Code.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Hmbown"
+  },
+  "homepage": "https://github.com/Hmbown/autodialectics",
+  "repository": "https://github.com/Hmbown/autodialectics",
+  "license": "MIT"
+}

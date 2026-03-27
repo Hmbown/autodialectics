@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "autodialectics": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "cd /home/hmbown/Projects/autodialectics && uv run autodialectics-mcp"
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "docs/ai-plugin-integrations.md"
+  ],
+  "mcp": {
+    "autodialectics": {
+      "type": "local",
+      "command": [
+        "bash",
+        "-lc",
+        "cd /home/hmbown/Projects/autodialectics && uv run autodialectics-mcp"
+      ]
+    }
+  }
+}
