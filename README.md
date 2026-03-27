@@ -1,60 +1,139 @@
 # Autodialectics
 
-Autodialectics is an agentic harness for keeping an LLM on-task during research and other high-drift work.
+An agentic harness that keeps LLMs honest during research, code, and other high-drift work.
 
-Instead of asking a model to “just do the task” and hoping it stays honest, it wraps the run in structure:
-- immutable task contracts
-- evidence gathering
-- thesis → antithesis → synthesis planning
-- domain-specific execution
-- independent verification
-- slop scoring
-- gate decisions
-- champion/challenger policy evolution
+Instead of hoping a model stays on task, Autodialectics wraps every run in a structured pipeline: immutable contracts, evidence gathering, dialectical planning (thesis/antithesis/synthesis), domain-specific execution, independent verification, slop scoring, and champion/challenger policy evolution.
 
-The goal is simple: reduce drift, fake completion, unsupported claims, and benchmark-gaming while still letting the underlying model do useful work.
+## Why
 
-Autodialectics is especially shaped for Hermes Agent environments. The default local model route assumes the Hermes Agent API server at http://127.0.0.1:8642, but any OpenAI-compatible chat-completions endpoint can be used.
+Most agent failures aren't intelligence failures. They're control failures:
 
-Current status
-- Core pipeline is implemented and tested.
-- Code tasks now support workspace-copy sandbox execution with test-command verification.
-- Hermes Agent API compatibility has been smoke-tested against a live local Hermes endpoint.
-- DSPy RLM and GEPA paths exist, but remain optional and should be treated as capability-gated rather than universally available.
+- The task changes shape mid-run
+- Evidence is thin but confidence stays high
+- Objections get ignored
+- The system claims "done" without doing the hard part
+- Evaluation collapses into self-congratulation
 
-Core pipeline
-1. Contract compilation
-   Normalize a task into an immutable contract with objectives, deliverables, acceptance criteria, and forbidden shortcuts.
-2. Evidence exploration
-   Load attached assets and build an evidence bundle with either heuristic chunk scoring or DSPy-assisted retrieval.
-3. Dialectical planning
-   Force the system through thesis, antithesis, and synthesis instead of letting the first plan stand uncontested.
-4. Execution
-   Domain adapters execute code, research, writing, experiment, analysis, or generic tasks.
-5. Verification
-   Evaluate the output against the contract from a fresh perspective.
-6. Evaluation
-   Score slop: unsupported claims, fake completion, requirement drift, benchmark gaming, and other failure modes.
-7. Gate
-   Accept, reject, revise, rollback, or promote.
-8. Evolution
-   Create challenger policies from benchmark evidence and promote only when they outperform the champion without increasing slop.
+Autodialectics is the harness around that behavior.
 
-Why this exists
-Most agent failures are not pure intelligence failures. They are control failures:
-- the task changes shape halfway through
-- evidence is thin but confidence stays high
-- objections are ignored
-- the system claims completion without doing the hard part
-- evaluation collapses into self-congratulation
+## How it works
 
-Autodialectics is meant to be the harness around that behavior.
+```
+Task JSON ──> Contract Compiler ──> Evidence Explorer ──> Dialectical Planner
+                                                              │
+                                          Thesis ──> Antithesis ──> Synthesis
+                                                              │
+                                                     Domain Execution
+                                                              │
+                                              Independent Verification
+                                                              │
+                                              Slop Scoring & Evaluation
+                                                              │
+                                                     Gate Decision
+                                                   (accept / reject /
+                                                    revise / rollback)
+                                                              │
+                                              Champion/Challenger Evolution
+```
 
-Hermes Agent integration
-Default local route:
-- Hermes API server: http://127.0.0.1:8642
+**1. Contract compilation** -- Lock the task into an immutable contract with objectives, deliverables, acceptance criteria, and forbidden shortcuts.
 
-Typical local config:
+**2. Evidence exploration** -- Load attached assets and build an evidence bundle using heuristic chunk scoring or DSPy-assisted retrieval.
+
+**3. Dialectical planning** -- Force the system through thesis, antithesis, and synthesis. The first plan never stands uncontested.
+
+**4. Execution** -- Domain adapters handle code, research, writing, experiment, analysis, or generic tasks. Code tasks run in a workspace-copy sandbox with test verification.
+
+**5. Verification** -- Evaluate output against the contract from a fresh perspective, independent from execution.
+
+**6. Evaluation** -- Score slop dimensions: unsupported claims, fake completion, requirement drift, benchmark gaming, redundancy.
+
+**7. Gate** -- Accept, reject, revise, or rollback based on evidence.
+
+**8. Evolution** -- Create challenger policies from benchmark results. Promote only when a challenger outperforms the champion without increasing slop.
+
+## Install
+
+```bash
+git clone https://github.com/Hmbown/autodialectics.git
+cd autodialectics
+pip install uv
+uv sync
+```
+
+For development and testing:
+
+```bash
+uv sync --extra dev
+```
+
+For DSPy integration (optional):
+
+```bash
+uv sync --extra dspy
+```
+
+## Quick start
+
+```bash
+# Initialize the database and default champion policy
+uv run autodialectics init
+
+# Compile a task into an immutable contract (inspect before running)
+uv run autodialectics compile examples/code_fix/task.json
+
+# Run the full pipeline
+uv run autodialectics run examples/code_fix/task.json
+
+# Inspect a completed run
+uv run autodialectics inspect <run_id>
+
+# Run the benchmark suite
+uv run autodialectics benchmark
+
+# Evolve a challenger policy from benchmark evidence
+uv run autodialectics evolve
+
+# Promote a challenger that outperforms the champion
+uv run autodialectics promote <policy_id>
+
+# Rollback to the previous champion
+uv run autodialectics rollback
+
+# Replay a run under a different policy
+uv run autodialectics replay <run_id>
+
+# Start the REST API
+uv run autodialectics serve --host 0.0.0.0 --port 8000
+```
+
+### Task format
+
+Tasks are JSON files with a title, description, and optional attached assets:
+
+```json
+{
+  "title": "Fix calculator division by zero",
+  "description": "The calculator.py function divide crashes on zero input. Fix it.",
+  "assets": [
+    {"kind": "file", "location": "examples/code_fix/workspace/calculator.py", "label": "calculator.py"}
+  ]
+}
+```
+
+Example tasks are included under `examples/`: `code_fix`, `research_synth`, `writing_revision`, `experiment_loop`, and `self_review`.
+
+## Configuration
+
+Autodialectics resolves config in this order:
+
+1. `--config PATH` flag
+2. `AUTODIALECTICS_CONFIG` environment variable
+3. `./autodialectics.yaml` in the current directory
+4. `~/.config/autodialectics/autodialectics.yaml`
+
+A typical local config:
+
 ```yaml
 cliproxy_base_url: "http://127.0.0.1:8642"
 cliproxy_api_key: ""
@@ -63,182 +142,136 @@ db_path: "autodialectics.db"
 artifacts_dir: "artifacts"
 benchmark_dir: "benchmarks/cases"
 use_dspy_rlm: false
-dspy_api_base: null
-dspy_api_key: null
-rlm_threshold_chars: 8000
-max_evidence_items: 20
 ```
 
-Hermes compatibility notes
-- The model client speaks OpenAI-compatible /v1/chat/completions.
-- If the endpoint is unavailable, Autodialectics falls back to heuristic/offline behavior instead of pretending the model call succeeded.
-- A local live smoke test against the Hermes API path is included as an optional integration test.
+The model client speaks OpenAI-compatible `/v1/chat/completions`. Point `cliproxy_base_url` at any compatible endpoint -- Hermes Agent, LiteLLM, vLLM, Ollama, or the bundled CLI gateways.
 
-Alternative local gateways
-- `claude-gateway` exposes the Claude CLI as an OpenAI-compatible `/v1/chat/completions` server.
-- `codex-gateway` exposes `codex exec` the same way, which is useful when you want Autodialectics to use the Codex CLI as the backend model route.
-- `cli-gateway` auto-detects the active local CLI environment and routes to `codex`, `claude`, or `hermes`. Set `CLI_GATEWAY_PROVIDER=codex|claude|hermes|auto` to override detection.
+### CLI gateways
 
-Example Codex gateway flow
+Autodialectics ships three local gateways that expose CLI tools as OpenAI-compatible endpoints:
+
+| Command | Backend | Notes |
+|---------|---------|-------|
+| `uv run claude-gateway` | Claude CLI | Wraps `claude` as `/v1/chat/completions` |
+| `uv run codex-gateway` | Codex CLI | Wraps `codex exec` the same way |
+| `uv run cli-gateway` | Auto-detect | Picks `claude`, `codex`, or `hermes` based on environment. Override with `CLI_GATEWAY_PROVIDER=codex\|claude\|hermes` |
+
+Start a gateway, then point Autodialectics at it:
+
 ```bash
-uv run codex-gateway
+uv run cli-gateway &
+uv run autodialectics run examples/code_fix/task.json
 ```
 
-Example auto-detecting gateway flow
+## REST API
+
 ```bash
-uv run cli-gateway
+uv run autodialectics serve --host 0.0.0.0 --port 8000 --reload
 ```
 
-Then point Autodialectics at it:
-```yaml
-cliproxy_base_url: "http://127.0.0.1:8642"
-cliproxy_model: "gpt-5.4-mini"
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| POST | `/tasks/compile` | Compile a task into a contract |
+| POST | `/runs` | Execute a full pipeline run |
+| GET | `/runs/{run_id}` | Inspect a run |
+| POST | `/benchmarks/run` | Run the benchmark suite |
+| POST | `/policies/evolve` | Create a challenger policy |
+| POST | `/policies/{policy_id}/promote` | Promote a challenger |
+| POST | `/policies/rollback` | Rollback to previous champion |
 
-What is real vs optional
-Implemented and exercised
-- contract compiler
-- runtime orchestration
-- dialectic engine
-- benchmark runner
-- FastAPI surface
-- Typer CLI
-- SQLite/file artifact persistence
-- code-task sandbox verification
-- heuristic challenger creation
+## AI assistant integrations
 
-Implemented but capability-gated
-- DSPy recursive language-model exploration path
-- DSPy GEPA optimization path
+Autodialectics includes first-class plugins for Claude Code, Codex, and OpenCode. All three share the same MCP server backend.
 
-Important caveat on DSPy paths
-- These paths are real code paths, not marketing copy.
-- They are also optional and environment-dependent.
-- If DSPy is unavailable or fails, the system falls back to heuristic exploration or heuristic challenger mutation.
-- DSPy RLM here means recursive language-model exploration over long context, not a plain retrieval-only pass.
-- Current automated tests verify fallback and capability-gating behavior for DSPy paths; they do not yet prove a fully configured positive-path DSPy runtime in CI.
-- `dspy_api_base` and `dspy_api_key` can override the DSPy endpoint, but the default positive path now routes DSPy through the configured OpenAI-compatible `cliproxy` endpoint.
-- The current GEPA implementation is intentionally conservative and should be described as experimental rather than production-hardened optimization.
+### Shared MCP server
 
-Reference architecture
-- See `docs/reference_flow.md` for the mermaid reference flow covering routing, recursive evidence exploration, dialectics, execution, verification, storage, benchmarking, and champion/challenger evolution.
-
-Installation
 ```bash
-git clone https://github.com/Hmbown/autodialectics.git
-cd autodialectics
-pip install uv
-uv sync
+uv run autodialectics-mcp
 ```
 
-Optional extras
+Exposes these tools over stdio: `health`, `init_runtime`, `compile_task`, `run_task`, `benchmark`, `inspect_run`, `read_artifact`, `evolve_policy`, `promote_policy`, `rollback_policy`, `replay_run`.
+
+### Claude Code
+
+The root `.mcp.json` auto-registers the MCP server when Claude Code opens this repo. Alternatively:
+
 ```bash
-uv sync --extra dev
-uv sync --extra dspy
+# Plugin directory mode
+claude --plugin-dir ./claude-marketplace/plugins/autodialectics
+
+# Local marketplace mode
+/plugin marketplace add ./claude-marketplace
+/plugin install autodialectics@autodialectics-marketplace
 ```
 
-Quick start
-Initialize local state:
+### Codex
+
+The `.agents/plugins/marketplace.json` registers a repo-local Codex plugin with a skill at `plugins/autodialectics/skills/run/SKILL.md`.
+
+### OpenCode
+
+The `opencode.json` at the repo root configures the MCP server plus a local plugin at `.opencode/plugins/autodialectics.js`. Companion commands: `/autodialectics-run`, `/autodialectics-benchmark`. Review agent: `@autodialectics-review`.
+
+### Validation
+
 ```bash
-autodialectics init
+python scripts/validate_ai_integrations.py
+uv run pytest tests/test_mcp_server.py -q
+node --check .opencode/plugins/autodialectics.js
 ```
 
-Compile a task:
+See [`docs/ai-plugin-integrations.md`](docs/ai-plugin-integrations.md) for full integration details.
+
+## DSPy (optional)
+
+Two optional paths use DSPy when available:
+
+- **Recursive language-model exploration (RLM)** -- Deep evidence retrieval over long context, replacing the default heuristic chunker.
+- **GEPA prompt evolution** -- Evolve challenger policies using DSPy optimization instead of heuristic mutation.
+
+Both are capability-gated. If DSPy is unavailable or fails, the system falls back to heuristic behavior automatically. Enable with `use_dspy_rlm: true` in config and install with `uv sync --extra dspy`.
+
+## Testing
+
 ```bash
-autodialectics compile examples/code_fix/task.json
+# Full test suite
+uv run pytest -q
+
+# Live integration test (auto-skips if no local endpoint is reachable)
+uv run pytest tests/test_integrations.py -m integration -q
 ```
 
-Run a task:
-```bash
-autodialectics run examples/code_fix/task.json
+CI runs the test suite on Python 3.11 and 3.12 with a packaging smoke check.
+
+## Project layout
+
 ```
-
-Run the benchmark suite:
-```bash
-autodialectics benchmark
-```
-
-Serve the API:
-```bash
-autodialectics serve --host 0.0.0.0 --port 8000 --reload
-```
-
-Configuration resolution order
-1. --config PATH
-2. AUTODIALECTICS_CONFIG
-3. ./autodialectics.yaml
-4. ~/.config/autodialectics/autodialectics.yaml
-
-To create a local config:
-```bash
-cp configs/autodialectics.example.yaml autodialectics.yaml
-```
-
-API endpoints
-- GET /health
-- POST /tasks/compile
-- POST /runs
-- GET /runs/{run_id}
-- POST /benchmarks/run
-- POST /policies/evolve
-- POST /policies/{policy_id}/promote
-- POST /policies/rollback
-
-AI assistant integrations
-- Codex: repo-local marketplace at `.agents/plugins/marketplace.json` and plugin files under `plugins/autodialectics/`
-- Claude Code: local marketplace at `claude-marketplace/.claude-plugin/marketplace.json`
-- OpenCode: project config at `opencode.json` plus local files under `.opencode/`
-- Shared backend: all three surfaces use the same MCP entrypoint, `uv run autodialectics-mcp`
-- Validation guide: `docs/ai-plugin-integrations.md`
-- Verification prompt for another agent: `test.md`
-
-Testing
-Run the full suite:
-```bash
-python -m pytest -q
-```
-
-Run the optional live Hermes API smoke test:
-```bash
-python -m pytest tests/test_integrations.py -m integration -q
-```
-
-The integration test auto-skips if a local Hermes API server is not reachable.
-
-CI
-GitHub Actions runs:
-- test suite on Python 3.11 and 3.12
-- packaging smoke check via python -m compileall
-
-Project layout
-```text
 autodialectics/
-├── autodialectics/
-│   ├── api/
-│   ├── cli/
-│   ├── contract/
-│   ├── dialectic/
-│   ├── evaluation/
-│   ├── evolution/
-│   ├── execution/
-│   ├── exploration/
-│   ├── memory/
-│   ├── routing/
-│   ├── schemas/
-│   ├── storage/
-│   └── utils/
-├── benchmarks/
-├── configs/
-├── docs/
-├── examples/
-└── tests/
+  api/            # FastAPI routes
+  cli/            # Typer CLI
+  contract/       # Task contract compiler
+  dialectic/      # Thesis/antithesis/synthesis planner
+  evaluation/     # Slop scoring and run evaluation
+  evolution/      # Champion/challenger policy management
+  execution/      # Domain adapters (code, research, writing, etc.)
+  exploration/    # Evidence gathering (heuristic + DSPy RLM)
+  integrations/   # MCP server
+  memory/         # Run memory and replay
+  routing/        # Model client, CLI gateways
+  schemas/        # Pydantic models
+  storage/        # SQLite + artifact persistence
+  utils/          # Shared utilities
+benchmarks/       # Benchmark case definitions
+configs/          # Example configuration files
+docs/             # Reference architecture and integration docs
+examples/         # Example task definitions
+plugins/          # Codex plugin
+claude-marketplace/  # Claude Code plugin
+.opencode/        # OpenCode plugin
+tests/            # Test suite
 ```
 
-Near-term priorities
-- strengthen integration tests around live OpenAI-compatible endpoints
-- harden DSPy/GEPA benchmarking semantics
-- improve replay beyond stored-manifest lookup
-- extend code sandboxing if stricter isolation becomes necessary
+## License
 
-License
 MIT
