@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from autodialectics.contract.compiler import ContractCompiler
 from autodialectics.evaluation.slop import RunEvaluator
-from autodialectics.execution.adapters import CodeAdapter
+from autodialectics.execution.adapters import CodeAdapter, _materialize_workspace
 from autodialectics.routing.cliproxy import ModelResponse
 from autodialectics.schemas import (
     AssetKind,
@@ -145,3 +146,62 @@ def test_run_evaluator_uses_sandbox_verification_for_code_tasks(tmp_path: Path) 
     ]
     assert sandbox_checks
     assert sandbox_checks[0].status == "pass"
+
+
+def test_code_adapter_verifies_existing_workspace_when_no_file_blocks_are_returned(tmp_path: Path) -> None:
+    workspace = _seed_code_workspace(tmp_path)
+    (workspace / "calculator.py").write_text(
+        "def divide(a, b):\n"
+        "    if b == 0:\n"
+        "        raise ValueError('division by zero')\n"
+        "    return a / b\n",
+        encoding="utf-8",
+    )
+    contract = _compile_code_contract(workspace)
+    adapter = CodeAdapter()
+
+    execution = adapter.execute(
+        contract,
+        EvidenceBundle(summary=""),
+        _dialectic(),
+        FakeModelClient("NO_CHANGES_NEEDED\nThe implementation already satisfies the task."),
+    )
+
+    sandbox = execution.structured_output["sandbox"]
+    assert execution.status == "completed"
+    assert sandbox["applied"] is False
+    assert sandbox["no_op_verification"] is True
+    assert sandbox["test_exit_code"] == 0
+    assert "test_calculator.py" in sandbox["verification_targets"]
+
+
+def test_materialize_workspace_avoids_colliding_mount_names(tmp_path: Path) -> None:
+    left_root = tmp_path / "alpha" / "workspace"
+    right_root = tmp_path / "beta" / "workspace"
+    left_root.mkdir(parents=True)
+    right_root.mkdir(parents=True)
+    (left_root / "main.py").write_text("LEFT = True\n", encoding="utf-8")
+    (right_root / "main.py").write_text("RIGHT = True\n", encoding="utf-8")
+
+    assets = [
+        AssetRef(
+            kind=AssetKind.FILE,
+            location=str(left_root / "main.py"),
+            label=f"left-{uuid4().hex[:6]}",
+        ),
+        AssetRef(
+            kind=AssetKind.FILE,
+            location=str(right_root / "main.py"),
+            label=f"right-{uuid4().hex[:6]}",
+        ),
+    ]
+
+    copied = _materialize_workspace(assets, tmp_path / "sandbox")
+
+    assert len(copied) == 2
+    assert copied[0] != copied[1]
+    copied_contents = {
+        mount_name: (tmp_path / "sandbox" / mount_name / "main.py").read_text(encoding="utf-8")
+        for mount_name in copied
+    }
+    assert sorted(copied_contents.values()) == ["LEFT = True\n", "RIGHT = True\n"]

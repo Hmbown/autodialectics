@@ -277,9 +277,9 @@ def init() -> None:
 
     champion = runtime.evolution.ensure_default_champion()
     console.print(f"[bold green]Initialized.[/bold green]")
-    console.print(f"  Champion policy: {champion.policy_id}")
-    console.print(f"  DB: {settings.db_path}")
-    console.print(f"  Artifacts: {settings.artifacts_dir}")
+    console.print(f"  Champion policy: {champion.policy_id}", soft_wrap=True)
+    console.print(f"  DB: {settings.db_path}", soft_wrap=True)
+    console.print(f"  Artifacts: {settings.artifacts_dir}", soft_wrap=True)
 
 
 # ── serve ───────────────────────────────────────────────────────────

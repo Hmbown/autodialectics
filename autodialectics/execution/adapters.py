@@ -73,7 +73,10 @@ class CodeAdapter(ExecutionAdapter):
             "You are a software engineering assistant. Implement the required "
             "code changes following the plan. Produce working code that passes "
             "all specified tests. Include any new or modified files in your "
-            "response. Do not stub or skip functionality."
+            "response. Do not stub or skip functionality. Return only the final "
+            "implementation payload, not your working notes. If the current "
+            "workspace already satisfies the task, respond with NO_CHANGES_NEEDED "
+            "on the first line followed by a brief justification."
         )
         user = self._build_user_prompt(contract, evidence, dialectic)
         user += (
@@ -81,7 +84,8 @@ class CodeAdapter(ExecutionAdapter):
             "For each file, use the format:\n"
             "FILE: path/to/file.py\n```python\n<code>\n```\n"
             "Use repository-relative paths only. Do not describe a patch without "
-            "including the full replacement content for each changed file."
+            "including the full replacement content for each changed file. "
+            "If no code change is required, do not emit FILE blocks."
         )
         resp = model_client.complete(
             role="executor", system_prompt=system, user_prompt=user
@@ -89,17 +93,9 @@ class CodeAdapter(ExecutionAdapter):
         execution = self._parse_response(resp.content, domain="code")
         file_blocks = _extract_file_blocks(resp.content)
         if not file_blocks:
-            execution.status = "failed"
             execution.tool_log.append(
-                "No sandbox run: executor response did not include FILE blocks."
+                "Executor response did not include FILE blocks; verifying copied workspace without modifications."
             )
-            execution.structured_output = {
-                "sandbox": {
-                    "applied": False,
-                    "reason": "No FILE blocks found in executor response.",
-                }
-            }
-            return execution
 
         return _apply_code_changes_in_sandbox(
             contract=contract,
@@ -125,12 +121,16 @@ class ResearchAdapter(ExecutionAdapter):
             "You are a research assistant. Produce a structured findings "
             "document. For each factual claim, cite the supporting source. "
             "Clearly distinguish established facts from inferences. "
-            "Acknowledge contradictory evidence.\n\n"
+            "Acknowledge contradictory evidence. Output only the final "
+            "deliverable; do not narrate your process or restate the prompt.\n\n"
             "Structure your response with:\n"
             "## Claims and Evidence\n"
             "For each claim: [CLAIM] - Evidence: [source/reasoning]\n\n"
             "## Inferences\n"
             "For each inference: [INFERENCE] - Based on: [evidence]\n\n"
+            "## Contradictions and Debates\n"
+            "Summarize the strongest direct disagreement, contested interpretation, "
+            "or mixed evidence in the sources. If none exists, say that explicitly.\n\n"
             "## Gaps and Uncertainties\n"
             "List what remains unknown or unverified."
         )
@@ -158,11 +158,16 @@ class WritingAdapter(ExecutionAdapter):
             "You are a writing and revision assistant. Produce or revise "
             "the document as specified. Follow the style, tone, and "
             "formatting requirements. Do not pad content unnecessarily. "
-            "Every paragraph should advance the document's purpose.\n\n"
+            "Every paragraph should advance the document's purpose. Output "
+            "only the final revised document and the requested change summary; "
+            "do not narrate your process or echo the prompt.\n\n"
             "Output the complete revised document. End with a summary "
             "of substantive changes made."
         )
         user = self._build_user_prompt(contract, evidence, dialectic)
+        source_assets = _load_textual_assets_for_prompt(contract)
+        if source_assets:
+            user += "\n\n## Source Material\n\n" + source_assets
         resp = model_client.complete(
             role="executor", system_prompt=system, user_prompt=user
         )
@@ -191,7 +196,8 @@ class ExperimentAdapter(ExecutionAdapter):
             "4. Data collection plan\n"
             "5. Analysis method (with statistical tests if applicable)\n"
             "6. Expected outcomes and interpretation criteria\n\n"
-            "Do not fabricate data. If reporting results, include actual data."
+            "Do not fabricate data. If reporting results, include actual data. "
+            "Output only the final protocol or analysis, not intermediate reasoning."
         )
         user = self._build_user_prompt(contract, evidence, dialectic)
         resp = model_client.complete(
@@ -216,7 +222,8 @@ class AnalysisAdapter(ExecutionAdapter):
         system = (
             "You are an analytical assistant. Produce a structured analysis "
             "memo. Consider multiple interpretations of the data. "
-            "Tie all conclusions to specific evidence.\n\n"
+            "Tie all conclusions to specific evidence. Output only the final "
+            "memo; do not narrate your process or restate the prompt.\n\n"
             "Structure:\n"
             "## Summary\n"
             "## Key Findings\n"
@@ -293,6 +300,32 @@ def _copy_tree_contents(src: Path, dest: Path) -> None:
             shutil.copy2(child, target)
 
 
+def _stable_mount_name(root: Path, used_names: set[str]) -> str:
+    """Return a deterministic mount name for a copied root without collisions."""
+    candidates = [root.name]
+
+    parent = root.parent
+    if parent.name:
+        candidates.append(f"{parent.name}__{root.name}")
+
+    grandparent = parent.parent
+    if parent.name and grandparent.name:
+        candidates.append(f"{grandparent.name}__{parent.name}__{root.name}")
+
+    for candidate in candidates:
+        if candidate and candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+
+    suffix = abs(hash(str(root.resolve()))) % 100000
+    fallback = f"{root.name or 'root'}__{suffix:05d}"
+    while fallback in used_names:
+        suffix += 1
+        fallback = f"{root.name or 'root'}__{suffix:05d}"
+    used_names.add(fallback)
+    return fallback
+
+
 def _materialize_workspace(assets: list[Any], workspace_root: Path) -> list[str]:
     """Copy code assets into an isolated workspace for sandboxed execution."""
     from autodialectics.schemas import AssetKind
@@ -323,10 +356,12 @@ def _materialize_workspace(assets: list[Any], workspace_root: Path) -> list[str]
         copied.append(root.name)
         return copied
 
+    used_mounts: set[str] = set()
     for root in unique_roots:
-        target = workspace_root / root.name
+        mount_name = _stable_mount_name(root, used_mounts)
+        target = workspace_root / mount_name
         shutil.copytree(root, target, dirs_exist_ok=True)
-        copied.append(root.name)
+        copied.append(mount_name)
 
     return copied
 
@@ -348,6 +383,41 @@ def _build_patch(rel_path: str, before: str, after: str) -> str:
         tofile=f"b/{rel_path}",
     )
     return "".join(diff)
+
+
+def _load_textual_assets_for_prompt(
+    contract: TaskContract,
+    *,
+    max_assets: int = 3,
+    max_chars_per_asset: int = 12000,
+) -> str:
+    """Load small textual assets directly into prompts for revision-style tasks."""
+    from autodialectics.schemas import AssetKind
+
+    rendered: list[str] = []
+    for asset in contract.relevant_assets[:max_assets]:
+        text = ""
+        label = asset.label or asset.asset_id
+
+        if asset.kind == AssetKind.INLINE_TEXT and asset.text:
+            text = asset.text
+        elif asset.kind == AssetKind.JSON:
+            text = asset.text or ""
+        elif asset.kind == AssetKind.FILE and asset.location:
+            path = Path(asset.location)
+            if path.is_file():
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except Exception:
+                    text = ""
+
+        if not text:
+            continue
+
+        snippet = text[:max_chars_per_asset]
+        rendered.append(f"[{label}]\n{snippet}")
+
+    return "\n\n".join(rendered)
 
 
 def _select_verification_command(
@@ -452,7 +522,8 @@ def _apply_code_changes_in_sandbox(
         execution.status = "completed" if exit_code in (None, 0) else "failed"
         execution.structured_output = {
             "sandbox": {
-                "applied": True,
+                "applied": bool(file_blocks),
+                "no_op_verification": not file_blocks,
                 "copied_assets": copied_assets,
                 "applied_files": applied_files,
                 "verification_targets": verification_targets,

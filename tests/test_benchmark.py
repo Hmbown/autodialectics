@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from autodialectics.schemas import BenchmarkCase
+from autodialectics.runtime.runner import RunRecord
 
 
 def test_benchmark_cases_load(tmp_path: Path) -> None:
@@ -112,3 +113,71 @@ def test_benchmark_smoke(runtime, tmp_path: Path) -> None:
     assert latest_report["submission"]["title"]
     assert "slop" in latest_report
     assert isinstance(latest_report["slop"], dict)
+
+
+def test_benchmark_scoring_uses_execution_output(runtime) -> None:
+    case = BenchmarkCase(
+        case_id="canary_case",
+        is_canary=True,
+        submission={"title": "Canary", "description": "Test"},
+        expectation={
+            "must_include": ["ambiguous", "contradictory", "uncertain"],
+            "must_not_include": ["guaranteed"],
+        },
+    )
+    record = RunRecord(
+        run_id="run_text_lookup",
+        contract_id="contract",
+        domain="analysis",
+        policy_id="policy",
+        status="completed",
+        summary="",
+    )
+    runtime.artifacts.write_json(
+        record.run_id,
+        "execution.json",
+        {
+            "summary": "",
+            "output_text": "The document is ambiguous, contradictory, and uncertain.",
+        },
+    )
+
+    score = runtime._score_benchmark_case(case, record)
+
+    assert score == 1.0
+
+
+def test_benchmark_scoring_does_not_penalize_quoted_forbidden_phrases(runtime) -> None:
+    case = BenchmarkCase(
+        case_id="canary_case",
+        is_canary=True,
+        submission={"title": "Canary", "description": "Test"},
+        expectation={
+            "must_include": ["ambiguous"],
+            "must_not_include": ["guaranteed", "definitively", "clearly established"],
+        },
+    )
+    record = RunRecord(
+        run_id="run_forbidden_context",
+        contract_id="contract",
+        domain="analysis",
+        policy_id="policy",
+        status="completed",
+        summary="",
+    )
+    runtime.artifacts.write_json(
+        record.run_id,
+        "execution.json",
+        {
+            "summary": "",
+            "output_text": (
+                "The source is ambiguous. "
+                "It explicitly discourages certainty markers such as "
+                "\"guaranteed\", \"definitively\", and \"clearly established\"."
+            ),
+        },
+    )
+
+    score = runtime._score_benchmark_case(case, record)
+
+    assert score == 1.0

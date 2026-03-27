@@ -56,6 +56,17 @@ def test_domain_inference_analysis(compiler: ContractCompiler) -> None:
     assert compiler.infer_domain(sub) == TaskDomain.ANALYSIS
 
 
+def test_domain_inference_prefers_analysis_over_incidental_benchmark_keyword(
+    compiler: ContractCompiler,
+) -> None:
+    sub = TaskSubmission(
+        title="Analyze the long context document",
+        description="This benchmark gaming canary checks whether the system can answer cautiously.",
+    )
+
+    assert compiler.infer_domain(sub) == TaskDomain.ANALYSIS
+
+
 def test_domain_inference_generic(compiler: ContractCompiler) -> None:
     """No keyword match should fall back to GENERIC."""
     sub = TaskSubmission(

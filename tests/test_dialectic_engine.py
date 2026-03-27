@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from autodialectics.contract.compiler import ContractCompiler
-from autodialectics.dialectic.engine import DialecticalPlanner
+from autodialectics.dialectic.engine import DialecticalPlanner, _parse_antithesis
 from autodialectics.routing.cliproxy import ModelResponse
-from autodialectics.schemas import EvidenceBundle, TaskSubmission
+from autodialectics.schemas import EvidenceBundle, ObjectionRecord, TaskSubmission
 
 
 class StaticModelClient:
@@ -114,3 +114,49 @@ def test_plan_falls_back_to_heuristic_when_llm_request_fails() -> None:
 
     assert artifact.thesis.startswith("Plan (heuristic):")
     assert artifact.synthesis.startswith("Revised plan (heuristic synthesis):")
+
+
+def test_parse_antithesis_accepts_markdown_table_rows() -> None:
+    objections = _parse_antithesis(
+        "\n".join(
+            [
+                "| # | claim | objection | severity |",
+                "| 1 | Define scope first | Scope is too broad | 0.8 |",
+                "| 2 | Run evaluation | Missing baseline and guardrails | 0.6 |",
+            ]
+        )
+    )
+
+    assert len(objections) == 2
+    assert objections[0].claim == "Define scope first"
+    assert objections[0].severity == 0.8
+    assert objections[1].objection == "Missing baseline and guardrails"
+
+
+def test_llm_synthesis_leaves_unaddressed_high_severity_objections_unresolved() -> None:
+    client = CapturingModelClient("1. Keep the original plan\n2. Add a short conclusion")
+    planner = DialecticalPlanner(model_client=client)
+
+    artifact = planner._llm_synthesis(
+        _contract(),
+        EvidenceBundle(summary="thin evidence"),
+        ("1. Draft a plan", ["Draft a plan"]),
+        (
+            "Claim being challenged: The scope is sufficient.\n"
+            "Objection: The plan ignores evidence gaps and benchmarking requirements.\n"
+            "Severity: 0.95",
+            [
+                ObjectionRecord(
+                    claim="The scope is sufficient.",
+                    objection="The plan ignores evidence gaps and benchmarking requirements.",
+                    severity=0.95,
+                )
+            ],
+        ),
+        "Reconcile the objections.",
+    )
+
+    assert artifact.objection_ledger[0].accepted is False
+    assert artifact.unresolved_questions == [
+        "The plan ignores evidence gaps and benchmarking requirements."
+    ]
