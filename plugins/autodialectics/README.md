@@ -10,6 +10,6 @@ Repository wiring:
 - Plugin manifest: `.codex-plugin/plugin.json`
 - MCP config: `.mcp.json`
 - Skill entrypoint: `skills/run/SKILL.md`
-- Marketplace entry: `/home/hmbown/Projects/autodialectics/.agents/plugins/marketplace.json`
+- Marketplace entry: `.agents/plugins/marketplace.json`
 
 The plugin intentionally keeps the Python package as the system of record. It does not fork or reimplement the runtime.

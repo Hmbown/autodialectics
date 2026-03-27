@@ -8,7 +8,7 @@ description: Use the local Autodialectics MCP server and CLI in this repository 
 Use this skill when the user wants the repository's own anti-slop harness to drive the work.
 
 Repository facts:
-- Root: `/home/hmbown/Projects/autodialectics`
+- Root: the repository root for the active checkout
 - Config: `autodialectics.yaml`
 - Preferred MCP entrypoint: `uv run autodialectics-mcp`
 - Preferred CLI command: `uv run autodialectics`

@@ -2,7 +2,7 @@
 
 Use this repository as the verification target:
 
-- Repo root: `/home/hmbown/Projects/autodialectics`
+- Repo root: the current repository root
 - Goal: verify that the Codex, Claude Code, and OpenCode integrations are correctly packaged and usable
 
 ## What to verify
@@ -29,7 +29,6 @@ Use this repository as the verification target:
 - Run:
 
 ```bash
-cd /home/hmbown/Projects/autodialectics
 python scripts/validate_ai_integrations.py
 node --check .opencode/plugins/autodialectics.js
 uv run autodialectics --help

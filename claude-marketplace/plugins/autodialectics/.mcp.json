@@ -4,7 +4,7 @@
       "command": "bash",
       "args": [
         "-lc",
-        "cd /home/hmbown/Projects/autodialectics && uv run autodialectics-mcp"
+        "repo_root=\"${AUTODIALECTICS_REPO_ROOT:-$PWD}\" && cd \"$repo_root\" && uv run autodialectics-mcp"
       ]
     }
   }

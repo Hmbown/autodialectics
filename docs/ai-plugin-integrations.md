@@ -2,6 +2,8 @@
 
 This repository now includes first-class integrations for Codex, Claude Code, and OpenCode, all backed by the same local Autodialectics MCP server.
 
+Set `AUTODIALECTICS_REPO_ROOT` when an AI client launches the MCP server from outside the repository root. The bundled configs fall back to the current working directory when that environment variable is unset.
+
 ## Shared backend
 
 - Python entrypoint: `uv run autodialectics-mcp`

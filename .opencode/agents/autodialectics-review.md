@@ -9,8 +9,6 @@ permission:
     "uv run autodialectics inspect *": allow
     "uv run autodialectics benchmark*": allow
     "python scripts/validate_ai_integrations.py": allow
-    "rg *": allow
-    "cat *": allow
   webfetch: deny
 ---
 

@@ -8,7 +8,7 @@ description: Use the local Autodialectics MCP server and CLI to compile tasks, e
 Use this skill when the user wants to work through the Autodialectics harness instead of asking the model to freestyle a task.
 
 Repository facts:
-- Repo root: `/home/hmbown/Projects/autodialectics`
+- Repo root: the repository root for the active checkout
 - Primary config: `autodialectics.yaml`
 - MCP entrypoint: `uv run autodialectics-mcp`
 - CLI entrypoint: `uv run autodialectics`

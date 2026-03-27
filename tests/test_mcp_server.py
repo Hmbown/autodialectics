@@ -6,6 +6,8 @@ import pytest
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from autodialectics.integrations.mcp_server import _ensure_within, _load_submission
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,3 +39,23 @@ async def test_mcp_server_lists_tools_and_compiles_task() -> None:
             )
             assert compile_result.structuredContent["title"]
             assert compile_result.structuredContent["domain"] == "code"
+
+
+def test_load_submission_rejects_paths_outside_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+
+    outside = tmp_path / "task.json"
+    outside.write_text('{"title":"Outside","description":"Nope"}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Path must stay within one of"):
+        _load_submission(str(outside))
+
+
+def test_ensure_within_accepts_artifacts_subpath(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    artifact_file = artifact_root / "run_1" / "summary.md"
+    artifact_file.parent.mkdir()
+    artifact_file.write_text("ok", encoding="utf-8")
+
+    assert _ensure_within(artifact_file.resolve(), artifact_root) == artifact_file.resolve()

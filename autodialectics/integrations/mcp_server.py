@@ -30,8 +30,28 @@ def _load_runtime(config_path: str | None = None):
     return AutodialecticsRuntime(settings)
 
 
+def _resolved_path(path_str: str) -> Path:
+    path = Path(path_str).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve()
+
+
+def _ensure_within(path: Path, *allowed_roots: Path) -> Path:
+    for root in allowed_roots:
+        root_path = root.resolve()
+        try:
+            path.relative_to(root_path)
+            return path
+        except ValueError:
+            continue
+
+    allowed_display = ", ".join(str(root.resolve()) for root in allowed_roots)
+    raise ValueError(f"Path must stay within one of: {allowed_display}")
+
+
 def _load_submission(task_file: str) -> TaskSubmission:
-    path = Path(task_file).expanduser().resolve()
+    path = _ensure_within(_resolved_path(task_file), Path.cwd())
     if not path.exists():
         raise FileNotFoundError(f"Task file not found: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -160,7 +180,8 @@ def read_artifact(
     if path is None:
         raise ValueError(f"Artifact not found for run {run_id}: {artifact_name}")
 
-    artifact_path = Path(path)
+    artifact_root = _resolved_path(runtime.settings.artifacts_dir)
+    artifact_path = _ensure_within(_resolved_path(path), artifact_root)
     if not artifact_path.exists():
         raise FileNotFoundError(f"Artifact path missing on disk: {artifact_path}")
 
