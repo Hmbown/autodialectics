@@ -121,6 +121,16 @@ class AutodialecticsRuntime:
             manifest.contract_id = contract.contract_id
             manifest.domain = contract.domain
             self.store.save_run_manifest(manifest.model_dump(mode="json"))
+            self._record_json_artifact(
+                manifest,
+                "submission.json",
+                submission.model_dump(mode="json"),
+            )
+            self._record_markdown_artifact(
+                manifest,
+                "contract.md",
+                contract.to_markdown(),
+            )
 
             # 2. Explore
             evidence = self.explorer.explore(contract)
@@ -357,24 +367,23 @@ class AutodialecticsRuntime:
             logger.error("Run %s not found", run_id)
             return None
 
-        # We need the original contract to reconstruct the submission
-        # For now, return the stored manifest info
-        logger.info(
-            "Replay requested for run %s (policy=%s)",
-            run_id,
-            policy_id,
-        )
-        # Full replay would require storing the original submission
-        # This is a placeholder that returns the stored record
-        return RunRecord(
-            run_id=run_id,
-            contract_id=manifest.get("contract_id", ""),
-            domain=manifest.get("domain", "generic"),
-            policy_id=policy_id or manifest.get("policy_id", ""),
-            status=manifest.get("status", "unknown"),
-            decision=manifest.get("decision"),
-            summary="Replay: stored manifest retrieved.",
-        )
+        artifact_paths = self.store.get_artifact_paths(run_id)
+        submission_path = artifact_paths.get("submission.json")
+        if not submission_path:
+            logger.error("Run %s cannot be replayed because submission.json is missing", run_id)
+            return None
+
+        try:
+            submission_payload = json.loads(
+                Path(submission_path).read_text(encoding="utf-8")
+            )
+            submission = TaskSubmission(**submission_payload)
+        except Exception as exc:
+            logger.error("Failed to load submission for run %s: %s", run_id, exc)
+            return None
+
+        logger.info("Replaying run %s with policy=%s", run_id, policy_id)
+        return self.run(submission, policy_id=policy_id)
 
     # ── Internal helpers ──────────────────────────────────────────────
 

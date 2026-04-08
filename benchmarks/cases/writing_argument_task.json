@@ -4,6 +4,7 @@
   "submission": {
     "title": "Revise argument for clarity and rigor",
     "description": "Improve the draft argument. Address the strongest objection to the thesis.",
+    "domain": "writing",
     "assets": [{"kind": "file", "location": "examples/writing_revision/draft.txt", "label": "draft.txt"}]
   },
   "expectation": {

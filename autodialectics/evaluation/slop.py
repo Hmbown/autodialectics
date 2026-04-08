@@ -116,12 +116,17 @@ def _artifact_support_status(
     lowered = criterion.lower()
     sandbox = execution.structured_output.get("sandbox", {})
     no_op_verification = bool(sandbox.get("no_op_verification"))
+    no_changes_declared = bool(
+        sandbox.get("no_changes_declared")
+        or execution.structured_output.get("no_changes_declared")
+        or execution.output_text.lstrip().startswith("NO_CHANGES_NEEDED")
+    )
 
     if sandbox_command and any(token in lowered for token in _SANDBOX_CRITERION_HINTS):
         status = "pass" if sandbox_exit_code == 0 else "fail"
         return status, f"Sandbox verification signal: {sandbox_command} (exit={sandbox_exit_code})"
 
-    if no_op_verification and sandbox_exit_code == 0:
+    if no_op_verification and no_changes_declared and sandbox_exit_code == 0:
         if "regression" in lowered or "existing functionality" in lowered:
             return "pass", "No-op sandbox verification passed; existing functionality did not regress."
         if "style" in lowered or "conventions" in lowered:
@@ -547,13 +552,23 @@ class SlopScorer:
         constraint_keywords = keyword_set(" ".join(contract.constraints))
         text_keywords = keyword_set(text)
 
-        obj_overlap = len(obj_keywords & text_keywords) / max(len(obj_keywords), 1)
-        constraint_overlap = (
-            len(constraint_keywords & text_keywords)
-            / max(len(constraint_keywords), 1)
-        )
+        weighted_overlap = 0.0
+        total_weight = 0.0
+        if obj_keywords:
+            obj_overlap = len(obj_keywords & text_keywords) / len(obj_keywords)
+            weighted_overlap += obj_overlap * 0.6
+            total_weight += 0.6
+        if constraint_keywords:
+            constraint_overlap = (
+                len(constraint_keywords & text_keywords)
+                / len(constraint_keywords)
+            )
+            weighted_overlap += constraint_overlap * 0.4
+            total_weight += 0.4
+        if total_weight == 0.0:
+            return 0.0
 
-        drift = 1.0 - (obj_overlap * 0.6 + constraint_overlap * 0.4)
+        drift = 1.0 - (weighted_overlap / total_weight)
         return max(0.0, min(drift, 1.0))
 
     def _fake_completion(
@@ -767,6 +782,22 @@ class RunEvaluator:
         sandbox = execution.structured_output.get("sandbox", {})
         sandbox_command = sandbox.get("test_command")
         sandbox_exit_code = sandbox.get("test_exit_code")
+        if execution.status != "completed":
+            notes = "Execution did not complete successfully."
+            if execution.structured_output.get("llm_request_failed"):
+                notes = "Execution failed because the configured LLM endpoint request failed."
+            elif execution.structured_output.get("offline_mode"):
+                notes = "Execution failed because the runtime was in offline mode."
+            elif sandbox.get("protocol_violation"):
+                notes = "Execution failed because the executor did not return FILE blocks or NO_CHANGES_NEEDED."
+            unmet.append("Execution completed successfully")
+            checks.append(
+                VerificationCheck(
+                    criterion="Execution completed successfully",
+                    status="fail",
+                    notes=notes,
+                )
+            )
 
         if contract.domain.value == "code" and sandbox_command:
             sandbox_status = "pass" if sandbox_exit_code == 0 else "fail"
@@ -829,6 +860,18 @@ class RunEvaluator:
         if not execution.declared_uncertainties and contract.constraints:
             independent_findings.append(
                 "No uncertainties declared despite having constraints."
+            )
+        if execution.structured_output.get("llm_request_failed"):
+            independent_findings.append(
+                "Configured LLM endpoint request failed before the executor produced a usable artifact."
+            )
+        if execution.structured_output.get("offline_mode"):
+            independent_findings.append(
+                "Executor ran in offline mode, so the run did not produce a live model-backed artifact."
+            )
+        if sandbox.get("protocol_violation"):
+            independent_findings.append(
+                "Executor violated the code-output protocol by returning neither FILE blocks nor NO_CHANGES_NEEDED."
             )
 
         report = VerificationReport(

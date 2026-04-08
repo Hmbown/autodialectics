@@ -202,8 +202,20 @@ class ContractCompiler:
     # ── Normalizers ───────────────────────────────────────────────────
 
     def _normalize_objectives(
-        self, user: list[str], domain: TaskDomain
+        self,
+        user: list[str],
+        domain: TaskDomain,
+        *,
+        title: str = "",
+        description: str = "",
     ) -> list[str]:
+        if user:
+            return list(user)
+
+        fallback = description.strip() or title.strip()
+        if fallback:
+            return [fallback]
+
         return list(user)  # Objectives come directly from user
 
     def _normalize_constraints(
@@ -241,6 +253,29 @@ class ContractCompiler:
             if item not in merged:
                 merged.append(item)
         return merged
+
+    def _normalize_workspace_root(self, workspace_root: str | None) -> str | None:
+        if workspace_root is None:
+            return None
+        normalized = workspace_root.strip()
+        return normalized or None
+
+    def _normalize_verification_commands(
+        self, commands: list[str], domain: TaskDomain
+    ) -> list[str]:
+        normalized: list[str] = []
+        for command in commands:
+            cleaned = command.strip()
+            if cleaned and cleaned not in normalized:
+                normalized.append(cleaned)
+        return normalized
+
+    def _normalize_max_repair_attempts(
+        self, attempts: int | None, domain: TaskDomain
+    ) -> int:
+        if attempts is None:
+            return 3 if domain == TaskDomain.CODE else 1
+        return max(1, attempts)
 
     # ── Evaluation rubric ─────────────────────────────────────────────
 
@@ -287,10 +322,18 @@ class ContractCompiler:
             "|||".join(submission.constraints),
             "|||".join(submission.deliverables),
             "|||".join(submission.acceptance_criteria),
+            submission.workspace_root or "",
+            "|||".join(submission.verification_commands),
+            str(submission.max_repair_attempts or ""),
         ])
         source_hash = hashlib.sha256(source_str.encode()).hexdigest()
 
-        objectives = self._normalize_objectives(submission.objectives, domain)
+        objectives = self._normalize_objectives(
+            submission.objectives,
+            domain,
+            title=submission.title,
+            description=submission.description,
+        )
         constraints = self._normalize_constraints(submission.constraints, domain)
         deliverables = self._normalize_deliverables(
             submission.deliverables, domain
@@ -301,16 +344,32 @@ class ContractCompiler:
         shortcuts = self._normalize_forbidden_shortcuts(
             submission.forbidden_shortcuts, domain
         )
+        workspace_root = self._normalize_workspace_root(submission.workspace_root)
+        verification_commands = self._normalize_verification_commands(
+            submission.verification_commands, domain
+        )
+        max_repair_attempts = self._normalize_max_repair_attempts(
+            submission.max_repair_attempts, domain
+        )
         rubric = self._evaluation_rubric(domain)
 
         notes: list[str] = []
         if not submission.objectives:
             notes.append(
-                "WARNING: No objectives provided. "
-                "Task success evaluation will be unreliable."
+                "No explicit objectives provided; seeded one from the task description/title."
             )
         if submission.domain is None:
             notes.append(f"Domain inferred as {domain.value} from keywords.")
+        if workspace_root:
+            notes.append(f"Execution workspace root set to {workspace_root}.")
+        if verification_commands:
+            notes.append(
+                f"Using {len(verification_commands)} explicit verification command(s)."
+            )
+        if max_repair_attempts > 1:
+            notes.append(
+                f"Bounded repair loop enabled with max {max_repair_attempts} attempt(s)."
+            )
 
         logger.info("Compiled contract for '%s' (domain=%s)", submission.title, domain)
 
@@ -324,6 +383,9 @@ class ContractCompiler:
             acceptance_criteria=criteria,
             forbidden_shortcuts=shortcuts,
             relevant_assets=submission.assets,
+            workspace_root=workspace_root,
+            verification_commands=verification_commands,
+            max_repair_attempts=max_repair_attempts,
             evaluation_rubric=rubric,
             compiler_notes=notes,
         )

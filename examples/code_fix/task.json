@@ -1,5 +1,8 @@
 {
   "title": "Fix calculator division by zero",
   "description": "The calculator.py function divide crashes on zero input. Fix it.",
+  "domain": "code",
+  "workspace_root": "examples/code_fix/workspace",
+  "verification_commands": ["python -m pytest -q test_calculator.py"],
   "assets": [{"kind": "file", "location": "examples/code_fix/workspace/calculator.py", "label": "calculator.py"}]
 }

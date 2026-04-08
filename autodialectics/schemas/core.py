@@ -40,6 +40,9 @@ class TaskSubmission(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     forbidden_shortcuts: list[str] = Field(default_factory=list)
     assets: list[AssetRef] = Field(default_factory=list)
+    workspace_root: str | None = None
+    verification_commands: list[str] = Field(default_factory=list)
+    max_repair_attempts: int | None = None
 
 
 # ── Compiled contract ────────────────────────────────────────────────
@@ -55,6 +58,9 @@ class TaskContract(BaseModel):
     acceptance_criteria: list[str]
     forbidden_shortcuts: list[str]
     relevant_assets: list[AssetRef]
+    workspace_root: str | None = None
+    verification_commands: list[str] = Field(default_factory=list)
+    max_repair_attempts: int = 1
     evaluation_rubric: dict[str, float]
     compiler_notes: list[str] = Field(default_factory=list)
 
@@ -98,6 +104,18 @@ class TaskContract(BaseModel):
                 label = asset.label or asset.asset_id
                 loc = asset.location or "(inline)"
                 lines.append(f"- **{label}** ({asset.kind.value}): {loc}")
+
+        if self.workspace_root:
+            lines += ["", "## Workspace", ""]
+            lines.append(f"- Workspace root: {self.workspace_root}")
+
+        if self.verification_commands:
+            lines += ["", "## Verification Commands", ""]
+            for command in self.verification_commands:
+                lines.append(f"- `{command}`")
+
+        lines += ["", "## Repair Budget", ""]
+        lines.append(f"- Max repair attempts: {self.max_repair_attempts}")
 
         if self.evaluation_rubric:
             lines += ["", "## Evaluation Rubric", ""]

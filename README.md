@@ -18,7 +18,7 @@ Autodialectics is especially shaped for Hermes Agent environments. The default l
 
 Current status
 - Core pipeline is implemented and tested.
-- Code tasks now support workspace-copy sandbox execution with test-command verification.
+- Code tasks now support explicit repo/workspace roots, sandbox-copy execution, explicit verification commands, and bounded repair retries.
 - Hermes Agent API compatibility has been smoke-tested against a live local Hermes endpoint.
 - DSPy RLM and GEPA paths exist, but remain optional and should be treated as capability-gated rather than universally available.
 
@@ -104,7 +104,7 @@ Implemented and exercised
 - FastAPI surface
 - Typer CLI
 - SQLite/file artifact persistence
-- code-task sandbox verification
+- code-task sandbox verification with replayable submissions
 - heuristic challenger creation
 
 Implemented but capability-gated
@@ -153,6 +153,35 @@ Run a task:
 autodialectics run examples/code_fix/task.json
 ```
 
+Autonomous repo-work tasks
+- Code tasks can now declare `workspace_root`, `verification_commands`, and `max_repair_attempts` in the task JSON.
+- The code adapter copies the workspace into an isolated sandbox, includes a compact workspace snapshot in the executor prompt, runs verification commands, and retries with failure feedback up to the configured repair budget.
+- `examples/code_fix/task.json` is the reference fixture for this workflow.
+
+Example task shape:
+```json
+{
+  "title": "Fix calculator division by zero",
+  "description": "The calculator.py function divide crashes on zero input. Fix it.",
+  "domain": "code",
+  "workspace_root": "examples/code_fix/workspace",
+  "verification_commands": ["python -m pytest -q test_calculator.py"],
+  "max_repair_attempts": 3,
+  "assets": [
+    {
+      "kind": "file",
+      "location": "examples/code_fix/workspace/calculator.py",
+      "label": "calculator.py"
+    }
+  ]
+}
+```
+
+Replay a prior run from the stored submission artifact:
+```bash
+autodialectics replay <run_id>
+```
+
 Run the benchmark suite:
 ```bash
 autodialectics benchmark
@@ -162,6 +191,40 @@ Serve the API:
 ```bash
 autodialectics serve --host 0.0.0.0 --port 8000 --reload
 ```
+
+Autonomous repo-work task shape
+For code tasks that should actually edit and verify a real repository, prefer an explicit workspace root plus explicit verification commands:
+
+```json
+{
+  "title": "Fix failing regression in the parser",
+  "description": "Implement the fix and prove it with the parser tests.",
+  "domain": "code",
+  "workspace_root": ".",
+  "verification_commands": [
+    "python -m pytest -q tests/test_parser.py"
+  ],
+  "max_repair_attempts": 3,
+  "assets": [
+    {
+      "kind": "file",
+      "location": "parser.py",
+      "label": "parser.py"
+    },
+    {
+      "kind": "file",
+      "location": "tests/test_parser.py",
+      "label": "tests/test_parser.py"
+    }
+  ]
+}
+```
+
+Notes:
+- `workspace_root` controls what gets copied into the sandbox for execution and verification.
+- `assets` remain the evidence set for planning and grounding, so you do not need to dump the whole repo into the prompt path.
+- `verification_commands` override heuristic test discovery and are the preferred mode for real repository work.
+- `max_repair_attempts` enables a bounded fix-verify-repair loop instead of a single-shot code response.
 
 Configuration resolution order
 1. --config PATH
@@ -237,7 +300,6 @@ autodialectics/
 Near-term priorities
 - strengthen integration tests around live OpenAI-compatible endpoints
 - harden DSPy/GEPA benchmarking semantics
-- improve replay beyond stored-manifest lookup
 - extend code sandboxing if stricter isolation becomes necessary
 
 License

@@ -47,7 +47,7 @@ class ContextExplorer:
         queries: list[str] | None = None,
     ) -> EvidenceBundle:
         """Load assets and explore them to build an evidence bundle."""
-        queries = queries or ["What is the main task and context?"]
+        queries = queries or self._default_queries(contract)
         assets = contract.relevant_assets
 
         if not assets:
@@ -126,6 +126,29 @@ class ContextExplorer:
             coverage_map=coverage_map,
             gaps=gaps,
         )
+
+    def _default_queries(self, contract: TaskContract) -> list[str]:
+        """Derive exploration queries from the compiled contract instead of a generic placeholder."""
+        candidates = [contract.title, *contract.objectives]
+        candidates.extend(contract.acceptance_criteria)
+        candidates.extend(contract.constraints[:2])
+        candidates.extend(contract.deliverables[:2])
+
+        queries: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            cleaned = candidate.strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            queries.append(cleaned)
+            if len(queries) >= 8:
+                break
+
+        return queries or ["What is the main task and context?"]
 
     # ── Asset loading ─────────────────────────────────────────────────
 

@@ -4,6 +4,7 @@
   "submission": {
     "title": "Design an ablation experiment",
     "description": "Propose an ablation study comparing two prompt strategies.",
+    "domain": "experiment",
     "assets": [{"kind": "file", "location": "examples/experiment_loop/notes.txt", "label": "notes.txt"}]
   },
   "expectation": {

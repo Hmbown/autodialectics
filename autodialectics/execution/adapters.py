@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import shlex
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,10 @@ from autodialectics.schemas import (
     TaskContract,
 )
 
-from autodialectics.routing.cliproxy import is_request_failure_response_text
+from autodialectics.routing.cliproxy import (
+    is_offline_response_text,
+    is_request_failure_response_text,
+)
 
 if TYPE_CHECKING:
     from autodialectics.routing.cliproxy import ModelClient
@@ -78,29 +82,98 @@ class CodeAdapter(ExecutionAdapter):
             "workspace already satisfies the task, respond with NO_CHANGES_NEEDED "
             "on the first line followed by a brief justification."
         )
-        user = self._build_user_prompt(contract, evidence, dialectic)
-        user += (
-            "\n\nIMPORTANT: Output all code changes clearly. "
-            "For each file, use the format:\n"
-            "FILE: path/to/file.py\n```python\n<code>\n```\n"
-            "Use repository-relative paths only. Do not describe a patch without "
-            "including the full replacement content for each changed file. "
-            "If no code change is required, do not emit FILE blocks."
-        )
-        resp = model_client.complete(
-            role="executor", system_prompt=system, user_prompt=user
-        )
-        execution = self._parse_response(resp.content, domain="code")
-        file_blocks = _extract_file_blocks(resp.content)
-        if not file_blocks:
-            execution.tool_log.append(
-                "Executor response did not include FILE blocks; verifying copied workspace without modifications."
-            )
+        with tempfile.TemporaryDirectory(prefix="autodialectics-code-") as tmpdir:
+            sandbox_root = Path(tmpdir) / "workspace"
+            sandbox_root.mkdir(parents=True, exist_ok=True)
+            copied_assets = _materialize_workspace(contract, sandbox_root)
 
-        return _apply_code_changes_in_sandbox(
-            contract=contract,
-            execution=execution,
-            file_blocks=file_blocks,
+            base_user = self._build_user_prompt(contract, evidence, dialectic)
+            base_user += (
+                "\n\nIMPORTANT: Output all code changes clearly. "
+                "For each file, use the format:\n"
+                "FILE: path/to/file.py\n```python\n<code>\n```\n"
+                "Use repository-relative paths only. Do not describe a patch without "
+                "including the full replacement content for each changed file. "
+                "If no code change is required, do not emit FILE blocks."
+            )
+            if contract.workspace_root:
+                base_user += (
+                    "\n\n## Sandbox Workspace\n\n"
+                    f"- Use `{contract.workspace_root}` as the repository root inside the sandbox."
+                )
+            if contract.verification_commands:
+                base_user += "\n\n## Required Verification Commands\n\n"
+                for command in contract.verification_commands:
+                    base_user += f"- `{command}`\n"
+
+            workspace_context = _render_workspace_context(sandbox_root)
+            if workspace_context:
+                base_user += "\n\n## Workspace Context\n\n" + workspace_context
+
+            max_attempts = max(contract.max_repair_attempts, 1)
+            candidate_files: dict[str, str] = {}
+            attempt_summaries: list[dict[str, Any]] = []
+            repair_context = ""
+
+            for attempt in range(1, max_attempts + 1):
+                user = base_user
+                if repair_context:
+                    user += "\n\n" + repair_context
+
+                resp = model_client.complete(
+                    role="executor",
+                    system_prompt=system,
+                    user_prompt=user,
+                )
+                execution = self._parse_response(resp.content, domain="code")
+                new_blocks = _extract_file_blocks(resp.content)
+                if new_blocks:
+                    candidate_files.update(new_blocks)
+                else:
+                    execution.tool_log.append(
+                        "Executor response did not include FILE blocks; verifying copied workspace without modifications."
+                    )
+
+                execution = _apply_code_changes_in_sandbox(
+                    contract=contract,
+                    execution=execution,
+                    file_blocks=candidate_files,
+                    workspace_root=sandbox_root,
+                    copied_assets=copied_assets,
+                )
+                execution.tool_log.append(f"Repair attempt {attempt}/{max_attempts}.")
+
+                sandbox = execution.structured_output.get("sandbox", {})
+                attempt_summaries.append(
+                    {
+                        "attempt": attempt,
+                        "status": execution.status,
+                        "applied_files": list(sandbox.get("applied_files", [])),
+                        "test_command": sandbox.get("test_command"),
+                        "test_exit_code": sandbox.get("test_exit_code"),
+                    }
+                )
+                execution.structured_output["attempts"] = list(attempt_summaries)
+
+                if (
+                    execution.status == "completed"
+                    or attempt == max_attempts
+                    or execution.structured_output.get("llm_request_failed")
+                    or execution.structured_output.get("offline_mode")
+                ):
+                    return execution
+
+                repair_context = _build_code_repair_context(
+                    execution=execution,
+                    candidate_files=candidate_files,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                )
+
+        return ExecutionArtifact(
+            summary="Code execution did not produce a usable attempt.",
+            output_text="Code execution did not produce a usable attempt.",
+            status="failed",
         )
 
 
@@ -326,9 +399,21 @@ def _stable_mount_name(root: Path, used_names: set[str]) -> str:
     return fallback
 
 
-def _materialize_workspace(assets: list[Any], workspace_root: Path) -> list[str]:
-    """Copy code assets into an isolated workspace for sandboxed execution."""
+def _materialize_workspace(
+    source: TaskContract | list[Any],
+    workspace_root: Path,
+) -> list[str]:
+    """Copy code assets or an explicit workspace into an isolated sandbox."""
     from autodialectics.schemas import AssetKind
+
+    contract = source if isinstance(source, TaskContract) else None
+    assets = contract.relevant_assets if contract is not None else source
+
+    if contract is not None and contract.workspace_root:
+        root = Path(contract.workspace_root).expanduser().resolve()
+        if root.is_dir():
+            _copy_tree_contents(root, workspace_root)
+            return [root.name or "."]
 
     copied: list[str] = []
     source_roots: list[Path] = []
@@ -420,11 +505,44 @@ def _load_textual_assets_for_prompt(
     return "\n\n".join(rendered)
 
 
-def _select_verification_command(
+def _render_workspace_context(
+    workspace_root: Path,
+    *,
+    max_entries: int = 60,
+) -> str:
+    """Render a compact file listing for the sandbox workspace."""
+    entries = sorted(
+        path.relative_to(workspace_root).as_posix()
+        for path in workspace_root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    if not entries:
+        return ""
+
+    preview = entries[:max_entries]
+    rendered = [f"- {entry}" for entry in preview]
+    if len(entries) > max_entries:
+        rendered.append(f"- ... ({len(entries) - max_entries} more files)")
+    return "\n".join(rendered)
+
+
+def _command_display(command: str | list[str]) -> str:
+    """Render a command for logs and summaries."""
+    if isinstance(command, str):
+        return command
+    return shlex.join(command)
+
+
+def _select_verification_commands(
     workspace_root: Path,
     changed_files: list[str],
-) -> tuple[list[str] | None, list[str]]:
-    """Choose the narrowest useful verification command for the sandbox."""
+    explicit_commands: list[str],
+) -> tuple[list[str | list[str]], list[str]]:
+    """Choose the verification commands for the sandbox."""
+    normalized_explicit = [command.strip() for command in explicit_commands if command.strip()]
+    if normalized_explicit:
+        return normalized_explicit, []
+
     discovered_tests = sorted(
         path.relative_to(workspace_root).as_posix()
         for path in workspace_root.rglob("*.py")
@@ -441,33 +559,188 @@ def _select_verification_command(
             or any(Path(changed).stem in test_path for changed in changed_files)
         ]
         targets = related_tests or discovered_tests
-        return [sys.executable, "-m", "pytest", "-q", *targets], targets
+        return [[sys.executable, "-m", "pytest", "-q", *targets]], targets
 
     python_targets = [path for path in changed_files if path.endswith(".py")]
     if python_targets:
-        return [sys.executable, "-m", "py_compile", *python_targets], python_targets
+        return [[sys.executable, "-m", "py_compile", *python_targets]], python_targets
 
-    return None, []
+    return [], []
 
 
-def _run_verification_command(
-    command: list[str] | None,
+def _run_verification_commands(
+    commands: list[str | list[str]],
     *,
     workspace_root: Path,
-) -> tuple[int | None, str, str]:
-    """Execute verification inside the sandbox workspace."""
-    if not command:
-        return None, "", ""
+) -> tuple[int | None, str, str, list[dict[str, Any]]]:
+    """Execute verification commands inside the sandbox workspace."""
+    if not commands:
+        return None, "", "", []
 
-    completed = subprocess.run(
-        command,
-        cwd=workspace_root,
-        text=True,
-        capture_output=True,
-        timeout=120,
-        check=False,
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    history: list[dict[str, Any]] = []
+    final_exit_code: int | None = None
+
+    for command in commands:
+        completed = subprocess.run(
+            command,
+            cwd=workspace_root,
+            text=True,
+            capture_output=True,
+            timeout=120,
+            check=False,
+            shell=isinstance(command, str),
+        )
+        command_text = _command_display(command)
+        history.append(
+            {
+                "command": command_text,
+                "exit_code": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+            }
+        )
+        if completed.stdout.strip():
+            stdout_parts.append(f"$ {command_text}\n{completed.stdout.strip()}")
+        if completed.stderr.strip():
+            stderr_parts.append(f"$ {command_text}\n{completed.stderr.strip()}")
+        final_exit_code = completed.returncode
+        if completed.returncode != 0:
+            break
+
+    return (
+        final_exit_code,
+        "\n\n".join(stdout_parts),
+        "\n\n".join(stderr_parts),
+        history,
     )
-    return completed.returncode, completed.stdout, completed.stderr
+
+
+def _render_candidate_files(
+    candidate_files: dict[str, str],
+    *,
+    max_files: int = 4,
+    max_chars_per_file: int = 4000,
+) -> str:
+    """Render the current candidate file set for repair prompts."""
+    rendered: list[str] = []
+    for rel_path, content in list(candidate_files.items())[:max_files]:
+        snippet = content[:max_chars_per_file]
+        rendered.append(
+            f"FILE: {rel_path}\n```text\n{snippet}\n```"
+        )
+    return "\n\n".join(rendered)
+
+
+def _render_workspace_context(
+    workspace_root: Path,
+    *,
+    max_files: int = 6,
+    max_chars_per_file: int = 3000,
+    max_tree_entries: int = 80,
+) -> str:
+    """Render a compact workspace tree plus representative file contents."""
+    all_files = [
+        path
+        for path in sorted(workspace_root.rglob("*"))
+        if path.is_file() and "__pycache__" not in path.parts
+    ]
+    if not all_files:
+        return ""
+
+    tree_entries = [
+        path.relative_to(workspace_root).as_posix()
+        for path in all_files[:max_tree_entries]
+    ]
+    preferred_suffixes = {
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".json",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".md",
+        ".txt",
+        ".go",
+        ".rs",
+        ".swift",
+    }
+    ranked_files = sorted(
+        all_files,
+        key=lambda path: (
+            path.suffix not in preferred_suffixes,
+            "test" not in path.name.lower(),
+            len(path.relative_to(workspace_root).parts),
+            path.relative_to(workspace_root).as_posix(),
+        ),
+    )
+
+    rendered_files: list[str] = []
+    for path in ranked_files[:max_files]:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        rel_path = path.relative_to(workspace_root).as_posix()
+        rendered_files.append(
+            f"[{rel_path}]\n```text\n{content[:max_chars_per_file]}\n```"
+        )
+
+    if not rendered_files:
+        return ""
+
+    parts = [
+        "### Workspace Tree",
+        "",
+        "```text",
+        *tree_entries,
+        "```",
+        "",
+        "### Representative Files",
+        "",
+        "\n\n".join(rendered_files),
+    ]
+    return "\n".join(parts)
+
+
+def _build_code_repair_context(
+    *,
+    execution: ExecutionArtifact,
+    candidate_files: dict[str, str],
+    attempt: int,
+    max_attempts: int,
+) -> str:
+    """Build follow-up context for a failed code attempt."""
+    sandbox = execution.structured_output.get("sandbox", {})
+    command_text = sandbox.get("test_command") or "none"
+    exit_code = sandbox.get("test_exit_code")
+    stdout = str(sandbox.get("stdout", "")).strip()
+    stderr = str(sandbox.get("stderr", "")).strip()
+
+    parts = [
+        f"## Previous Attempt Failed ({attempt}/{max_attempts})",
+        "",
+        f"- Verification command(s): `{command_text}`",
+        f"- Exit code: `{exit_code}`",
+    ]
+    if stdout:
+        parts += ["", "### Verification Stdout", "", f"```text\n{stdout[:4000]}\n```"]
+    if stderr:
+        parts += ["", "### Verification Stderr", "", f"```text\n{stderr[:4000]}\n```"]
+    if candidate_files:
+        parts += [
+            "",
+            "### Current Candidate Files",
+            "",
+            _render_candidate_files(candidate_files),
+            "",
+            "Revise the existing candidate files as needed. You may emit only the files that changed from the current candidate state.",
+        ]
+    return "\n".join(parts)
 
 
 def _apply_code_changes_in_sandbox(
@@ -475,17 +748,24 @@ def _apply_code_changes_in_sandbox(
     contract: TaskContract,
     execution: ExecutionArtifact,
     file_blocks: dict[str, str],
+    workspace_root: Path | None = None,
+    copied_assets: list[str] | None = None,
 ) -> ExecutionArtifact:
     """Materialize a sandbox workspace, apply model changes, and run verification."""
+    owns_workspace = workspace_root is None
     with tempfile.TemporaryDirectory(prefix="autodialectics-code-") as tmpdir:
-        workspace_root = Path(tmpdir) / "workspace"
-        workspace_root.mkdir(parents=True, exist_ok=True)
-        copied_assets = _materialize_workspace(contract.relevant_assets, workspace_root)
+        active_workspace = workspace_root or (Path(tmpdir) / "workspace")
+        if owns_workspace:
+            active_workspace.mkdir(parents=True, exist_ok=True)
+            copied_assets = _materialize_workspace(contract, active_workspace)
 
         patches: list[str] = []
         applied_files: list[str] = []
+        llm_request_failed = bool(execution.structured_output.get("llm_request_failed"))
+        offline_mode = bool(execution.structured_output.get("offline_mode"))
+        no_changes_declared = bool(execution.structured_output.get("no_changes_declared"))
         for rel_path, new_content in file_blocks.items():
-            target = _safe_workspace_path(workspace_root, rel_path)
+            target = _safe_workspace_path(active_workspace, rel_path)
             before = target.read_text(encoding="utf-8") if target.exists() else ""
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(new_content, encoding="utf-8")
@@ -494,18 +774,27 @@ def _apply_code_changes_in_sandbox(
                 patches.append(patch_text)
             applied_files.append(rel_path)
 
-        command, verification_targets = _select_verification_command(
-            workspace_root, applied_files
+        protocol_violation = not applied_files and not no_changes_declared
+        if protocol_violation and not llm_request_failed and not offline_mode:
+            execution.tool_log.append(
+                "Executor did not return FILE blocks or an explicit NO_CHANGES_NEEDED response."
+            )
+
+        commands, verification_targets = _select_verification_commands(
+            active_workspace,
+            applied_files,
+            contract.verification_commands,
         )
-        exit_code, stdout, stderr = _run_verification_command(
-            command, workspace_root=workspace_root
+        exit_code, stdout, stderr, verification_runs = _run_verification_commands(
+            commands,
+            workspace_root=active_workspace,
         )
 
         execution.created_files = applied_files
         execution.patches = patches
         execution.test_results = []
-        if command is not None:
-            command_text = " ".join(command)
+        if commands:
+            command_text = " && ".join(_command_display(command) for command in commands)
             status_text = "passed" if exit_code == 0 else "failed"
             execution.test_results.append(
                 f"Sandbox verification {status_text}: {command_text} (exit {exit_code})."
@@ -519,18 +808,26 @@ def _apply_code_changes_in_sandbox(
                 "No verification command was available for sandboxed code changes."
             )
 
-        execution.status = "completed" if exit_code in (None, 0) else "failed"
+        status_ok = exit_code in (None, 0)
+        if llm_request_failed or offline_mode or protocol_violation:
+            status_ok = False
+
+        execution.status = "completed" if status_ok else "failed"
         execution.structured_output = {
+            **execution.structured_output,
             "sandbox": {
                 "applied": bool(file_blocks),
                 "no_op_verification": not file_blocks,
-                "copied_assets": copied_assets,
+                "no_changes_declared": no_changes_declared,
+                "copied_assets": copied_assets or [],
                 "applied_files": applied_files,
                 "verification_targets": verification_targets,
+                "verification_runs": verification_runs,
                 "test_command": command_text,
                 "test_exit_code": exit_code,
                 "stdout": stdout,
                 "stderr": stderr,
+                "protocol_violation": protocol_violation,
             }
         }
 
@@ -541,6 +838,10 @@ def _apply_code_changes_in_sandbox(
             f"Verification command: {command_text or 'none'}",
             f"Verification exit code: {exit_code if exit_code is not None else 'n/a'}",
         ]
+        if protocol_violation:
+            report_lines.append(
+                "Protocol violation: executor returned neither FILE blocks nor NO_CHANGES_NEEDED."
+            )
         if stdout.strip():
             report_lines.append("Verification stdout:\n" + stdout.strip())
         if stderr.strip():
@@ -627,12 +928,24 @@ def _parse_response(
             structured_output={"llm_request_failed": True, "domain": domain or "generic"},
             status="failed",
         )
+    if is_offline_response_text(content):
+        return ExecutionArtifact(
+            summary=content,
+            output_text=content,
+            tool_log=["Executor ran in offline mode and did not produce a usable response."],
+            declared_uncertainties=[
+                "No live LLM endpoint was configured; execution artifact may be incomplete."
+            ],
+            structured_output={"offline_mode": True, "domain": domain or "generic"},
+            status="failed",
+        )
 
     patches: list[str] = []
     test_results: list[str] = []
     created_files: list[str] = []
     tool_log: list[str] = []
     uncertainties: list[str] = []
+    no_changes_declared = content.lstrip().startswith("NO_CHANGES_NEEDED")
 
     # Extract file references (code adapter pattern)
     import re
@@ -673,7 +986,10 @@ def _parse_response(
         created_files=created_files,
         tool_log=tool_log,
         declared_uncertainties=uncertainties,
-        structured_output={},
+        structured_output={
+            "no_changes_declared": no_changes_declared,
+            "domain": domain or "generic",
+        },
         status="completed",
     )
 

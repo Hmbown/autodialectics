@@ -4,6 +4,7 @@
   "submission": {
     "title": "Synthesize research on attention mechanisms",
     "description": "Read the provided materials and produce a structured research memo.",
+    "domain": "research",
     "assets": [
       {"kind": "file", "location": "examples/research_synth/materials.txt", "label": "materials.txt"},
       {"kind": "file", "location": "examples/research_synth/long_context.txt", "label": "long_context.txt"}

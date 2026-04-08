@@ -137,3 +137,32 @@ def test_contract_has_evaluation_rubric(compiler: ContractCompiler) -> None:
     contract = compiler.compile(sub)
     total = sum(contract.evaluation_rubric.values())
     assert abs(total - 1.0) < 0.02, f"Rubric weights sum to {total}, expected ~1.0"
+
+
+def test_code_contract_preserves_workspace_execution_settings(compiler: ContractCompiler) -> None:
+    sub = TaskSubmission(
+        title="Fix bug in repository",
+        description="Implement the fix and run the requested checks.",
+        domain=TaskDomain.CODE,
+        workspace_root="examples/code_fix/workspace",
+        verification_commands=["python -m pytest -q test_calculator.py"],
+    )
+
+    contract = compiler.compile(sub)
+
+    assert contract.workspace_root == "examples/code_fix/workspace"
+    assert contract.verification_commands == ["python -m pytest -q test_calculator.py"]
+    assert contract.max_repair_attempts == 3
+
+
+def test_contract_seeds_objective_from_description_when_missing(compiler: ContractCompiler) -> None:
+    sub = TaskSubmission(
+        title="Fix repository bug",
+        description="Patch the failing code path and verify the fix.",
+        domain=TaskDomain.CODE,
+    )
+
+    contract = compiler.compile(sub)
+
+    assert contract.objectives == ["Patch the failing code path and verify the fix."]
+    assert any("seeded one from the task description/title" in note for note in contract.compiler_notes)

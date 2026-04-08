@@ -12,6 +12,7 @@ from autodialectics.schemas import (
     ObjectionRecord,
     TaskDomain,
     TaskSubmission,
+    VerificationVerdict,
 )
 
 
@@ -248,6 +249,30 @@ def test_verification_uses_sandbox_signal_for_test_related_criteria(evaluator: R
     assert criterion_checks
     assert criterion_checks[0].status == "pass"
     assert "sandbox verification signal" in criterion_checks[0].notes.lower()
+
+
+def test_verification_fails_when_execution_never_completed(evaluator: RunEvaluator) -> None:
+    contract = _make_contract(title="Verification", description="Check failed execution handling.")
+    contract.domain = TaskDomain.CODE
+    execution = ExecutionArtifact(
+        status="failed",
+        output_text="[LLM REQUEST FAILED] executor failed.",
+        structured_output={
+            "llm_request_failed": True,
+            "sandbox": {
+                "test_command": "python -m pytest -q test_example.py",
+                "test_exit_code": 0,
+                "protocol_violation": True,
+            },
+        },
+    )
+
+    report = evaluator.verify(contract, execution, evidence=EvidenceBundle(summary=""))
+
+    statuses = {check.criterion: check.status for check in report.checks}
+    assert statuses["Execution completed successfully"] == "fail"
+    assert report.verdict == VerificationVerdict.FAIL
+    assert any("endpoint request failed" in finding.lower() for finding in report.independent_findings)
 
 
 def test_verification_credits_successful_no_op_code_verification(evaluator: RunEvaluator) -> None:

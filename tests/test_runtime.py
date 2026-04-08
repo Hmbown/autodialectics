@@ -30,6 +30,8 @@ def test_artifact_emission(runtime, tmp_path: Path) -> None:
 
     run_dir = Path(runtime.settings.artifacts_dir) / record.run_id
     expected_files = [
+        "submission.json",
+        "contract.md",
         "evidence.json",
         "dialectic.json",
         "execution.json",
@@ -100,3 +102,18 @@ def test_compile_task(runtime) -> None:
     assert contract.source_hash
     assert contract.domain
     assert len(contract.evaluation_rubric) > 0
+
+
+def test_replay_uses_stored_submission_and_creates_new_run(runtime) -> None:
+    sub = TaskSubmission(
+        title="Replay test",
+        description="Run the same task twice from stored submission state.",
+    )
+
+    first = runtime.run(sub)
+    replayed = runtime.replay(first.run_id)
+
+    assert replayed is not None
+    assert replayed.run_id != first.run_id
+    assert replayed.contract_id
+    assert replayed.status in ("completed", "rejected", "failed")
