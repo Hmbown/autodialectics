@@ -1,11 +1,24 @@
 {
   "name": "autodialectics",
-  "description": "Run the local Autodialectics anti-slop harness from Claude Code.",
+  "description": "Anti-slop harness for keeping LLMs on-task with contracts, evidence, dialectics, verification, and policy evolution.",
   "version": "0.1.0",
   "author": {
-    "name": "Hmbown"
+    "name": "Hmbown",
+    "url": "https://github.com/Hmbown"
   },
   "homepage": "https://github.com/Hmbown/autodialectics",
   "repository": "https://github.com/Hmbown/autodialectics",
-  "license": "MIT"
+  "license": "MIT",
+  "keywords": [
+    "autodialectics",
+    "anti-slop",
+    "verification",
+    "dialectics",
+    "policy-evolution",
+    "benchmarking",
+    "agentic"
+  ],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "mcpServers": "./.mcp.json"
 }

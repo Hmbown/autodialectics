@@ -1,47 +1,55 @@
 ---
 name: run
-description: Use the local Autodialectics MCP server and CLI in this repository to compile tasks, run the anti-slop pipeline, inspect stored runs, benchmark policies, and replay or evolve them.
+description: Compile and execute an Autodialectics anti-slop pipeline for a task. Covers health checks, runtime init, contract compilation, and full pipeline execution.
 ---
 
-# Autodialectics Run Skill
+# Autodialectics Run
 
-Use this skill when the user wants the repository's own anti-slop harness to drive the work.
+Use this skill to drive the Autodialectics anti-slop pipeline against a task.
 
-Repository facts:
-- Root: the repository root for the active checkout
-- Config: `autodialectics.yaml`
-- Preferred MCP entrypoint: `uv run autodialectics-mcp`
-- Preferred CLI command: `uv run autodialectics`
+## Prerequisites
 
-Preferred MCP workflow:
+`autodialectics-mcp` must be on PATH (`pip install autodialectics`).
 
-1. `health`
-2. `init_runtime`
-3. `compile_task`
-4. `run_task`
-5. `inspect_run` or `read_artifact`
-6. `benchmark`, `evolve_policy`, `promote_policy`, `rollback_policy`, or `replay_run`
+## MCP Workflow
 
-CLI fallback commands:
+1. **`health`** — verify the MCP server is reachable.
+2. **`init_runtime`** — ensure the database and default champion policy exist.
+3. **`compile_task`** — compile the task JSON into an immutable contract. Inspect it before proceeding.
+4. **`run_task`** — execute the full pipeline (evidence → dialectic → execution → verification → evaluation → gate).
+   - Pass `detach: true` for long-running tasks. Poll with `inspect_run` afterward.
+
+## CLI Fallback
+
+If the MCP server is not available:
 
 ```bash
-uv run autodialectics init
-uv run autodialectics compile examples/code_fix/task.json
-uv run autodialectics run examples/code_fix/task.json
-uv run autodialectics benchmark
-uv run autodialectics inspect <run_id>
-uv run autodialectics replay <run_id>
-uv run autodialectics evolve
-uv run autodialectics promote <policy_id>
-uv run autodialectics rollback
+autodialectics init
+autodialectics compile <task.json>
+autodialectics run <task.json>
 ```
 
-Usage guidance:
-- Prefer the MCP tools when the plugin has loaded them.
-- Work from the repository root for CLI fallback.
-- Prefer compile plus inspect when a task or benchmark result is ambiguous.
-- Summaries should include the run ID, decision, overall score, slop composite, and any unresolved risks.
-- Do not claim a policy is better without benchmark evidence.
+## Task File Format
 
-Arguments:
-- If the user passes a task path after `/autodialectics:run`, treat it as the target task file and execute the narrowest fitting workflow.
+Tasks are JSON files with at minimum:
+
+```json
+{
+  "title": "Short description",
+  "description": "What needs to be done and why",
+  "domain": "code|research|writing|experiment|analysis|generic",
+  "workspace_root": "path/to/workspace",
+  "verification_commands": ["pytest -q"],
+  "assets": [{"kind": "file", "location": "path/to/file", "label": "name"}]
+}
+```
+
+## Guidance
+
+- Always compile before running if the task is new or ambiguous.
+- Summaries should include: run ID, decision (accept/reject/revise/rollback), overall score, slop composite, and unresolved risks.
+- Pass a `policy_id` to `run_task` to test a specific policy instead of the current champion.
+
+## Arguments
+
+If the user passes a task path after `/autodialectics:run`, treat it as the target task file and execute the compile → run workflow.

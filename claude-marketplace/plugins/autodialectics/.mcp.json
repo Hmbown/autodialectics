@@ -1,11 +1,8 @@
 {
   "mcpServers": {
     "autodialectics": {
-      "command": "bash",
-      "args": [
-        "-lc",
-        "repo_root=\"${AUTODIALECTICS_REPO_ROOT:-$PWD}\" && cd \"$repo_root\" && uv run autodialectics-mcp"
-      ]
+      "command": "autodialectics-mcp",
+      "args": []
     }
   }
 }
