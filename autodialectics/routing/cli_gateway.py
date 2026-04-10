@@ -110,7 +110,7 @@ def _default_model_for_provider(provider: str) -> str:
     if configured:
         return configured
     if provider == "codex":
-        return os.getenv("CODEX_GATEWAY_MODEL", "").strip() or "gpt-5.4-mini"
+        return os.getenv("CODEX_GATEWAY_MODEL", "").strip() or "gpt-5.4"
     if provider == "claude":
         return os.getenv("CLAUDE_GATEWAY_MODEL", "").strip() or "sonnet"
     return os.getenv("HERMES_GATEWAY_MODEL", "").strip() or "auto"

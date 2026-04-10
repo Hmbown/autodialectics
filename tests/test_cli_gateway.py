@@ -69,7 +69,7 @@ def test_chat_completions_routes_to_resolved_provider(monkeypatch) -> None:
 def test_chat_completions_maps_default_model_for_codex(monkeypatch) -> None:
     async def fake_call(provider: str, system_prompt: str, user_prompt: str, model: str):
         assert provider == "codex"
-        assert model == "gpt-5.4-mini"
+        assert model == "gpt-5.4"
         return {
             "result": "gateway ok",
             "usage": {
@@ -96,7 +96,7 @@ def test_chat_completions_maps_default_model_for_codex(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["model"] == "gpt-5.4-mini"
+    assert response.json()["model"] == "gpt-5.4"
 
 
 def test_main_accepts_runtime_flags(monkeypatch) -> None:

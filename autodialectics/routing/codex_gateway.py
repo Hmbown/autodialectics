@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8642
-DEFAULT_MODEL = "gpt-5.4-mini"
+DEFAULT_MODEL = "gpt-5.4"
 DEFAULT_TIMEOUT_SECONDS = 300
 
 app = FastAPI(title="Codex CLI Gateway")

@@ -32,7 +32,7 @@ def test_chat_completions_adapts_codex_result_to_openai_shape(monkeypatch) -> No
     async def fake_call(system_prompt: str, user_prompt: str, model: str) -> dict[str, object]:
         assert system_prompt == "System guidance"
         assert user_prompt == "User request"
-        assert model == "gpt-5.4-mini"
+        assert model == "gpt-5.4"
         return {
             "result": "gateway ok",
             "usage": {
@@ -48,7 +48,7 @@ def test_chat_completions_adapts_codex_result_to_openai_shape(monkeypatch) -> No
     response = client.post(
         "/v1/chat/completions",
         json={
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.4",
             "messages": [
                 {"role": "system", "content": "System guidance"},
                 {"role": "user", "content": "User request"},
@@ -59,7 +59,7 @@ def test_chat_completions_adapts_codex_result_to_openai_shape(monkeypatch) -> No
     assert response.status_code == 200
     payload = response.json()
     assert payload["object"] == "chat.completion"
-    assert payload["model"] == "gpt-5.4-mini"
+    assert payload["model"] == "gpt-5.4"
     assert payload["choices"][0]["message"]["content"] == "gateway ok"
     assert payload["usage"] == {
         "prompt_tokens": 17,
@@ -84,7 +84,7 @@ def test_resolve_model_maps_default_to_gateway_default(monkeypatch) -> None:
 
     assert codex_gateway._resolve_model("default") == "gpt-5.4"
     assert codex_gateway._resolve_model("") == "gpt-5.4"
-    assert codex_gateway._resolve_model("gpt-5.4-mini") == "gpt-5.4-mini"
+    assert codex_gateway._resolve_model("gpt-5.4") == "gpt-5.4"
 
 
 def test_main_accepts_runtime_flags(monkeypatch) -> None:

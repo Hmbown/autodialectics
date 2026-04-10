@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import threading
+import time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -22,12 +24,21 @@ server = FastMCP(
     instructions=SERVER_INSTRUCTIONS,
 )
 
+_BACKGROUND_RUNS: dict[str, threading.Thread] = {}
+_BACKGROUND_RUNS_LOCK = threading.Lock()
+
 
 def _load_runtime(config_path: str | None = None):
     from autodialectics.runtime.runner import AutodialecticsRuntime
 
     settings = Settings.load(config_path)
     return AutodialecticsRuntime(settings)
+
+
+def _build_run_id() -> str:
+    from autodialectics.runtime.runner import build_run_id
+
+    return build_run_id()
 
 
 def _resolved_path(path_str: str) -> Path:
@@ -73,6 +84,60 @@ def _run_record_to_dict(record: Any) -> dict[str, Any]:
         "summary": record.summary,
         "error": record.error,
     }
+
+
+def _launch_background_run(
+    *,
+    run_id: str,
+    submission: TaskSubmission,
+    policy_id: str | None,
+    config_path: str | None,
+) -> None:
+    def _worker() -> None:
+        try:
+            runtime = _load_runtime(config_path)
+            runtime.run(submission, policy_id=policy_id, run_id=run_id)
+        finally:
+            with _BACKGROUND_RUNS_LOCK:
+                _BACKGROUND_RUNS.pop(run_id, None)
+
+    thread = threading.Thread(
+        target=_worker,
+        name=f"autodialectics-run-{run_id}",
+        daemon=True,
+    )
+    with _BACKGROUND_RUNS_LOCK:
+        _BACKGROUND_RUNS[run_id] = thread
+    thread.start()
+
+
+def _background_run_payload(
+    *,
+    run_id: str,
+    task_file: str,
+    policy_id: str | None,
+    config_path: str | None,
+) -> dict[str, Any]:
+    runtime = _load_runtime(config_path)
+    manifest = None
+    for _ in range(50):
+        manifest = runtime.store.get_run_manifest(run_id)
+        if manifest is not None:
+            break
+        time.sleep(0.02)
+
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "status": manifest.get("status", "running") if manifest else "starting",
+        "background": True,
+        "task_file": str(_resolved_path(task_file)),
+        "policy_id": policy_id,
+        "inspect_hint": f"Call inspect_run('{run_id}') to poll for completion.",
+    }
+    if manifest is not None:
+        payload["manifest"] = manifest
+        payload["artifact_paths"] = runtime.store.get_artifact_paths(run_id)
+    return payload
 
 
 @server.tool(
@@ -125,9 +190,25 @@ def run_task(
     task_file: str,
     policy_id: str | None = None,
     config_path: str | None = None,
+    detach: bool = False,
 ) -> dict[str, Any]:
-    runtime = _load_runtime(config_path)
     submission = _load_submission(task_file)
+    if detach:
+        run_id = _build_run_id()
+        _launch_background_run(
+            run_id=run_id,
+            submission=submission,
+            policy_id=policy_id,
+            config_path=config_path,
+        )
+        return _background_run_payload(
+            run_id=run_id,
+            task_file=task_file,
+            policy_id=policy_id,
+            config_path=config_path,
+        )
+
+    runtime = _load_runtime(config_path)
     record = runtime.run(submission, policy_id=policy_id)
     return _run_record_to_dict(record)
 
