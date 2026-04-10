@@ -9,13 +9,23 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from autodialectics.contract.compiler import ContractCompiler
 from autodialectics.dialectic.engine import AdvanceGate, DialecticalPlanner
+from autodialectics.evaluation.pre_mortem import (
+    PreMortemScore,
+    extract_features as extract_pre_mortem_features,
+    score_risk as score_pre_mortem_risk,
+)
 from autodialectics.evaluation.slop import RunEvaluator
 from autodialectics.evolution.gepa_optimizer import ChampionChallengerManager
 from autodialectics.execution.adapters import AdapterRegistry
 from autodialectics.exploration.rlm_explorer import ContextExplorer
+from autodialectics.runtime.autopilot import (
+    AutopilotCycleReport,
+    AutopilotSessionReport,
+)
 from autodialectics.routing.cliproxy import ModelClient, build_model_client
 from autodialectics.schemas import (
     AdvanceAction,
@@ -33,6 +43,13 @@ from autodialectics.storage.files import ArtifactStore
 from autodialectics.storage.sqlite import SqliteStore
 
 logger = logging.getLogger(__name__)
+
+
+def build_run_id(started_at: datetime | None = None) -> str:
+    """Generate a run identifier compatible with existing artifact naming."""
+    timestamp = started_at or datetime.now(timezone.utc)
+    suffix = int(uuid4().hex[:4], 16) % 10000
+    return f"run_{timestamp.strftime('%Y%m%d%H%M%S')}_{suffix:04d}"
 
 
 @dataclass
@@ -87,13 +104,15 @@ class AutodialecticsRuntime:
         submission: TaskSubmission,
         policy_id: str | None = None,
         benchmark_case: BenchmarkCase | None = None,
+        run_id: str | None = None,
+        pre_mortem_routing: bool = False,
     ) -> RunRecord:
         """Execute the full pipeline: compile → explore → plan → execute → verify → evaluate → decide.
 
         Returns a RunRecord with all results.
         """
         started_at = datetime.now(timezone.utc)
-        run_id = f"run_{started_at.strftime('%Y%m%d%H%M%S')}_{id(submission) % 10000:04d}"
+        run_id = run_id or build_run_id(started_at)
 
         # Resolve policy
         if policy_id:
@@ -139,6 +158,46 @@ class AutodialecticsRuntime:
             # 3. Plan (dialectic)
             dialectic = self.planner.plan(contract, evidence, policy_surfaces)
             self._record_json_artifact(manifest, "dialectic.json", dialectic)
+
+            # 3.5. Pre-mortem risk assessment (experimental, opt-in)
+            pre_mortem_score: PreMortemScore | None = None
+            if pre_mortem_routing:
+                pm_features = extract_pre_mortem_features(contract, evidence, dialectic)
+                pre_mortem_score = score_pre_mortem_risk(pm_features)
+                self._record_json_artifact(manifest, "pre_mortem.json", {
+                    "features": pm_features.as_dict(),
+                    "score": pre_mortem_score.as_dict(),
+                })
+                logger.info(
+                    "Pre-mortem [%s]: %s",
+                    run_id,
+                    pre_mortem_score.rationale,
+                )
+
+                if pre_mortem_score.routing == "skip":
+                    manifest.status = RunStatus.REJECTED
+                    manifest.decision = AdvanceAction.REJECT
+                    manifest.summary = (
+                        f"Skipped by pre-mortem router: {pre_mortem_score.rationale}"
+                    )
+                    manifest.ended_at = datetime.now(timezone.utc)
+                    self.store.save_run_manifest(manifest.model_dump(mode="json"))
+                    self._record_markdown_artifact(
+                        manifest, "summary.md", manifest.summary,
+                    )
+                    return RunRecord(
+                        run_id=run_id,
+                        contract_id=contract.contract_id,
+                        domain=contract.domain.value,
+                        policy_id=policy_id,
+                        status="skipped",
+                        decision="reject",
+                        overall_score=0.0,
+                        slop_composite=0.0,
+                        started_at=started_at.isoformat(),
+                        ended_at=manifest.ended_at.isoformat(),
+                        summary=manifest.summary,
+                    )
 
             # 4. Execute
             adapter = self.adapters.for_domain(contract.domain)
@@ -188,7 +247,11 @@ class AutodialecticsRuntime:
             # 9. Save benchmark if this is a benchmark run
             if benchmark_case:
                 benchmark_report = self._build_benchmark_report(
-                    run_id, benchmark_case, evaluation, verification
+                    run_id,
+                    benchmark_case,
+                    evaluation,
+                    verification,
+                    policy_id=policy_id,
                 )
                 self.store.save_benchmark_report(run_id, benchmark_report)
                 self._record_json_artifact(
@@ -237,6 +300,7 @@ class AutodialecticsRuntime:
         self,
         suite_dir: str | Path | None = None,
         policy_id: str | None = None,
+        pre_mortem_routing: bool = False,
     ) -> list[RunRecord]:
         """Run all benchmark cases from a suite directory."""
         if suite_dir is None:
@@ -256,6 +320,7 @@ class AutodialecticsRuntime:
                 case.submission,
                 policy_id=policy_id,
                 benchmark_case=case,
+                pre_mortem_routing=pre_mortem_routing,
             )
             records.append(record)
 
@@ -305,6 +370,181 @@ class AutodialecticsRuntime:
         )
         logger.info("Created challenger: %s", challenger.policy_id)
         return challenger.policy_id
+
+    def evolve_from_reports(
+        self,
+        reports: list[dict[str, Any]],
+        *,
+        use_gepa: bool = True,
+    ) -> str:
+        """Create a challenger policy from an explicit benchmark report set."""
+        if not reports:
+            logger.info("No benchmark reports available for evolution")
+            return ""
+
+        challenger = self.evolution.create_challenger(
+            reports, use_gepa=use_gepa
+        )
+        logger.info("Created challenger: %s", challenger.policy_id)
+        return challenger.policy_id
+
+    def autopilot(
+        self,
+        *,
+        suite_dir: str | Path | None = None,
+        max_cycles: int | None = None,
+        duration_seconds: float | None = None,
+        sleep_seconds: int = 300,
+        failure_backoff_seconds: int = 60,
+        max_consecutive_failures: int = 3,
+        use_gepa: bool = True,
+        before_cycle: Any | None = None,
+        require_healthy_gateway: bool = False,
+        gateway_supervised: bool = False,
+        gateway_url: str | None = None,
+        pre_mortem_routing: bool = False,
+    ) -> AutopilotSessionReport:
+        """Run a persistent benchmark/evolve/promote loop."""
+        started_at = datetime.now(timezone.utc)
+        started_monotonic = time.monotonic()
+        session = AutopilotSessionReport(
+            session_id=f"autopilot_{started_at.strftime('%Y%m%d%H%M%S')}",
+            started_at=started_at.isoformat(),
+            duration_seconds=duration_seconds,
+            max_cycles=max_cycles,
+            sleep_seconds=sleep_seconds,
+            failure_backoff_seconds=failure_backoff_seconds,
+            require_healthy_gateway=require_healthy_gateway,
+            gateway_supervised=gateway_supervised,
+            gateway_url=gateway_url,
+        )
+
+        cycle_index = 0
+        stop_reason = "completed"
+
+        while True:
+            elapsed = time.monotonic() - started_monotonic
+            if max_cycles is not None and cycle_index >= max_cycles:
+                stop_reason = "max_cycles_reached"
+                break
+            if duration_seconds is not None and elapsed >= duration_seconds:
+                stop_reason = "duration_elapsed"
+                break
+
+            cycle_index += 1
+            cycle = AutopilotCycleReport(cycle_index=cycle_index)
+            session.total_cycles = cycle_index
+
+            try:
+                if before_cycle is not None:
+                    ready = before_cycle(cycle_index)
+                    if require_healthy_gateway and ready is False:
+                        raise RuntimeError("Gateway health check failed before cycle start.")
+
+                champion = self.evolution.ensure_default_champion()
+                champion_id = champion.policy_id
+                cycle.champion_policy_id = champion_id
+
+                champion_records = self.benchmark(
+                    suite_dir=suite_dir,
+                    policy_id=champion_id,
+                    pre_mortem_routing=pre_mortem_routing,
+                )
+                if not champion_records:
+                    raise RuntimeError("No benchmark cases were loaded for champion evaluation.")
+
+                champion_summary = self._policy_benchmark_summary(champion_id)
+                cycle.champion_run_ids = [record.run_id for record in champion_records]
+                cycle.champion_run_count = len(champion_records)
+                cycle.champion_overall_score = champion_summary.get("overall_score", 0.0)
+                cycle.champion_slop_composite = champion_summary.get("slop_composite", 0.0)
+                cycle.champion_canary_passed = champion_summary.get("canary_passed", 0.0) >= 0.5
+                cycle.resulting_champion_policy_id = champion_id
+
+                champion_reports = self.store.benchmark_reports_for_run_ids(
+                    cycle.champion_run_ids
+                )
+                challenger_id = self.evolve_from_reports(
+                    champion_reports,
+                    use_gepa=use_gepa,
+                )
+                if challenger_id:
+                    cycle.challenger_policy_id = challenger_id
+                    challenger_records = self.benchmark(
+                        suite_dir=suite_dir,
+                        policy_id=challenger_id,
+                        pre_mortem_routing=pre_mortem_routing,
+                    )
+                    if not challenger_records:
+                        raise RuntimeError(
+                            "No benchmark cases were loaded for challenger evaluation."
+                        )
+
+                    challenger_summary = self._policy_benchmark_summary(challenger_id)
+                    cycle.challenger_run_ids = [record.run_id for record in challenger_records]
+                    cycle.challenger_run_count = len(challenger_records)
+                    cycle.challenger_overall_score = challenger_summary.get("overall_score", 0.0)
+                    cycle.challenger_slop_composite = challenger_summary.get("slop_composite", 0.0)
+                    cycle.challenger_canary_passed = (
+                        challenger_summary.get("canary_passed", 0.0) >= 0.5
+                    )
+
+                    promoted = self.promote(challenger_id)
+                    if promoted is not None:
+                        cycle.promoted = True
+                        cycle.promotion_outcome = "promoted"
+                        cycle.resulting_champion_policy_id = challenger_id
+                        session.promoted_cycles += 1
+                    else:
+                        cycle.promotion_outcome = "denied"
+                else:
+                    cycle.promotion_outcome = "no_challenger"
+
+                session.successful_cycles += 1
+                session.consecutive_failures = 0
+            except Exception as exc:
+                logger.exception("Autopilot cycle %s failed: %s", cycle_index, exc)
+                cycle.error = str(exc)
+                session.consecutive_failures += 1
+                session.notes.append(
+                    f"Cycle {cycle_index} failed: {exc}"
+                )
+                try:
+                    cycle.resulting_champion_policy_id = self.evolution.ensure_default_champion().policy_id
+                except Exception:
+                    cycle.resulting_champion_policy_id = cycle.resulting_champion_policy_id or ""
+            finally:
+                cycle.ended_at = datetime.now(timezone.utc).isoformat()
+                session.cycles.append(cycle)
+                session.final_champion_policy_id = cycle.resulting_champion_policy_id
+
+            if cycle.error and session.consecutive_failures >= max_consecutive_failures:
+                stop_reason = "consecutive_failures"
+                session.notes.append(
+                    f"Stopping after {session.consecutive_failures} consecutive failure(s)."
+                )
+                break
+
+            elapsed = time.monotonic() - started_monotonic
+            if max_cycles is not None and cycle_index >= max_cycles:
+                stop_reason = "max_cycles_reached"
+                break
+            if duration_seconds is not None and elapsed >= duration_seconds:
+                stop_reason = "duration_elapsed"
+                break
+
+            sleep_for = failure_backoff_seconds if cycle.error else sleep_seconds
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+
+        session.status = stop_reason
+        session.ended_at = datetime.now(timezone.utc).isoformat()
+        if not session.final_champion_policy_id:
+            try:
+                session.final_champion_policy_id = self.evolution.ensure_default_champion().policy_id
+            except Exception:
+                session.final_champion_policy_id = ""
+        return session
 
     def promote(self, challenger_id: str) -> dict[str, Any] | None:
         """Promote a challenger to champion."""
@@ -582,11 +822,14 @@ class AutodialecticsRuntime:
         case: BenchmarkCase,
         evaluation: RunEvaluation,
         verification: Any,
+        *,
+        policy_id: str | None = None,
     ) -> dict[str, Any]:
         """Build a benchmark report dict for storage."""
         return {
             "run_id": run_id,
             "case_id": case.case_id,
+            "policy_id": policy_id,
             "is_canary": case.is_canary,
             "submission": case.submission.model_dump(mode="json"),
             "overall_score": evaluation.overall_score,
@@ -602,3 +845,10 @@ class AutodialecticsRuntime:
             "expectation": case.expectation.model_dump(mode="json"),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def _policy_benchmark_summary(self, policy_id: str) -> dict[str, Any]:
+        """Return benchmark summary data for a stored policy."""
+        policy_data = self.store.get_policy(policy_id)
+        if policy_data is None:
+            return {}
+        return policy_data.get("benchmark_summary", {}) or {}

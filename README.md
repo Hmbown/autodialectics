@@ -89,6 +89,9 @@ uv run autodialectics replay <run_id>
 # Run benchmarks and evolve policy
 uv run autodialectics benchmark
 uv run autodialectics evolve
+
+# Run unattended benchmark/evolve/promote cycles for an overnight session
+uv run autodialectics autopilot --duration-hours 8
 ```
 
 ## Task format
@@ -158,6 +161,57 @@ Autodialectics ships local gateways that expose CLI tools as OpenAI-compatible e
 - `uv run cli-gateway`
 
 `cli-gateway` auto-detects the active local CLI environment and can be overridden with `CLI_GATEWAY_PROVIDER=codex|claude|hermes`.
+
+## Overnight autonomous mode
+
+The new `autopilot` command is the intended path for continuous unattended operation. It wraps the existing pipeline in a resilient control loop:
+
+1. Benchmark the current champion.
+2. Evolve a challenger from the benchmark reports generated in that same cycle.
+3. Benchmark the challenger.
+4. Promote only if the challenger beats the champion without increasing slop and while passing canaries.
+5. Repeat until the runtime budget, cycle budget, or failure budget is exhausted.
+
+Example:
+
+```bash
+uv run autodialectics autopilot --duration-hours 8
+```
+
+Useful flags:
+
+- `--max-cycles N` to cap the number of cycles instead of using a wall-clock budget
+- `--sleep-seconds N` to control spacing between successful cycles
+- `--failure-backoff-seconds N` to back off after failures
+- `--max-consecutive-failures N` to stop rather than spin forever on repeated failures
+- `--ensure-gateway` to auto-start a local CLI gateway when `cliproxy_base_url` points at localhost and nothing is listening
+- `--allow-heuristic-fallback` if you explicitly want heuristic-only operation when no LLM backend is healthy
+
+Each session writes durable reports to `artifacts/autopilot/` as both JSON and Markdown.
+
+### Pre-mortem failure router (experimental)
+
+The `--pre-mortem-routing` flag enables an experimental early-exit checkpoint
+that runs after evidence exploration and dialectic planning but **before**
+expensive execution. It extracts cheap features (evidence poverty, gap coverage,
+unresolved question density, objection severity) and scores run-level risk.
+
+Routing decisions:
+- **normal** (risk < 0.50): proceed as usual.
+- **scrutinize** (0.50 <= risk < 0.80): proceed but flag for extra review. (Currently logged; future: stricter verification.)
+- **skip** (risk >= 0.80): reject the run immediately, saving execution cost.
+
+```bash
+uv run autodialectics autopilot --duration-hours 4 --pre-mortem-routing
+```
+
+The router records a `pre_mortem.json` artifact for every run it evaluates,
+containing extracted features and the risk score. This data can be used for
+retrospective analysis and weight tuning.
+
+**Status:** Experimental. Default pipeline behaviour is unchanged. The router
+is opt-in only and behind an explicit flag. Weights are derived from empirical
+observation on 27 historical runs but have not been validated on a held-out set.
 
 ## REST API
 

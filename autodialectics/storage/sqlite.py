@@ -135,5 +135,24 @@ class SqliteStore:
         ).fetchall()
         return [json.loads(r["data"]) for r in rows]
 
+    def benchmark_reports_for_run_ids(self, run_ids: list[str]) -> list[dict]:
+        """Return benchmark reports for a specific set of run_ids."""
+        if not run_ids:
+            return []
+
+        placeholders = ", ".join("?" for _ in run_ids)
+        rows = self.conn.execute(
+            (
+                "SELECT run_id, data FROM benchmark_reports "
+                f"WHERE run_id IN ({placeholders}) ORDER BY id DESC"
+            ),
+            tuple(run_ids),
+        ).fetchall()
+
+        reports = [json.loads(r["data"]) for r in rows]
+        order = {run_id: index for index, run_id in enumerate(run_ids)}
+        reports.sort(key=lambda report: order.get(report.get("run_id", ""), len(order)))
+        return reports
+
     def close(self) -> None:
         self.conn.close()

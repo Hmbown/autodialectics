@@ -69,6 +69,59 @@ def _get_runtime(settings=None):
     return AutodialecticsRuntime(settings)
 
 
+def _autopilot_output_paths(settings, session_id: str) -> tuple[Path, Path]:
+    base = Path(settings.artifacts_dir) / "autopilot"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{session_id}.json", base / f"{session_id}.md"
+
+
+def _render_autopilot_markdown(report) -> str:
+    lines = [
+        f"# Autopilot Session: {report.session_id}",
+        "",
+        f"- Status: {report.status}",
+        f"- Started: {report.started_at}",
+        f"- Ended: {report.ended_at}",
+        f"- Total cycles: {report.total_cycles}",
+        f"- Successful cycles: {report.successful_cycles}",
+        f"- Promotions: {report.promoted_cycles}",
+        f"- Final champion: {report.final_champion_policy_id or 'unknown'}",
+    ]
+
+    if report.gateway_url:
+        lines.append(f"- Gateway URL: {report.gateway_url}")
+
+    if report.notes:
+        lines += ["", "## Notes", ""]
+        for note in report.notes:
+            lines.append(f"- {note}")
+
+    if report.cycles:
+        lines += ["", "## Cycles", ""]
+        for cycle in report.cycles:
+            lines.append(
+                (
+                    f"- Cycle {cycle.cycle_index}: champion={cycle.champion_policy_id} "
+                    f"score={cycle.champion_overall_score:.2f} "
+                    f"slop={cycle.champion_slop_composite:.2f} "
+                    f"promotion={cycle.promotion_outcome} "
+                    f"final_champion={cycle.resulting_champion_policy_id or 'unknown'}"
+                )
+            )
+            if cycle.error:
+                lines.append(f"  error: {cycle.error}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _persist_autopilot_report(settings, report) -> tuple[Path, Path]:
+    json_path, md_path = _autopilot_output_paths(settings, report.session_id)
+    json_path.write_text(json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+    md_path.write_text(_render_autopilot_markdown(report), encoding="utf-8")
+    return json_path, md_path
+
+
 # ── run ─────────────────────────────────────────────────────────────
 
 
@@ -306,6 +359,100 @@ def serve(
         port=port,
         reload=reload,
     )
+
+
+@app.command()
+def autopilot(
+    suite_dir: Optional[str] = typer.Option(None, help="Benchmark suite directory"),
+    max_cycles: Optional[int] = typer.Option(None, help="Maximum benchmark/evolution cycles to run"),
+    duration_hours: Optional[float] = typer.Option(
+        None,
+        help="Wall-clock runtime budget in hours. Defaults to 8 when neither bound is supplied.",
+    ),
+    sleep_seconds: int = typer.Option(300, help="Seconds to sleep between successful cycles"),
+    failure_backoff_seconds: int = typer.Option(60, help="Seconds to sleep after a failed cycle"),
+    max_consecutive_failures: int = typer.Option(3, help="Stop after this many consecutive failed cycles"),
+    no_gepa: bool = typer.Option(False, "--no-gepa", help="Disable GEPA when evolving challengers"),
+    ensure_gateway: bool = typer.Option(
+        True,
+        "--ensure-gateway/--no-ensure-gateway",
+        help="Auto-start a local CLI gateway when cliproxy points at localhost and nothing is listening.",
+    ),
+    allow_heuristic_fallback: bool = typer.Option(
+        False,
+        "--allow-heuristic-fallback",
+        help="Permit heuristic-only operation when no healthy LLM gateway is available.",
+    ),
+    pre_mortem_routing: bool = typer.Option(
+        False,
+        "--pre-mortem-routing",
+        help="[Experimental] Enable pre-mortem failure router to skip or scrutinize likely-bad runs before execution.",
+    ),
+) -> None:
+    """Run benchmark/evolution/promotion cycles unattended for an extended session."""
+    settings = _load_settings()
+    runtime = _get_runtime(settings)
+
+    from autodialectics.runtime.autopilot import LocalGatewaySupervisor
+
+    if max_cycles is None and duration_hours is None:
+        duration_hours = 8.0
+
+    duration_seconds = duration_hours * 3600 if duration_hours is not None else None
+    gateway = None
+
+    try:
+        if ensure_gateway or not allow_heuristic_fallback:
+            gateway = LocalGatewaySupervisor(settings.cliproxy_base_url)
+            gateway_ready = (
+                gateway.ensure_available() if ensure_gateway else gateway.is_healthy()
+            )
+            if not gateway_ready and not allow_heuristic_fallback:
+                console.print(
+                    "[red]No healthy LLM gateway is available for autonomous mode.[/red]"
+                )
+                raise typer.Exit(1)
+
+        console.print("[bold blue]Starting autonomous overnight loop...[/bold blue]")
+        report = runtime.autopilot(
+            suite_dir=suite_dir,
+            max_cycles=max_cycles,
+            duration_seconds=duration_seconds,
+            sleep_seconds=sleep_seconds,
+            failure_backoff_seconds=failure_backoff_seconds,
+            max_consecutive_failures=max_consecutive_failures,
+            use_gepa=not no_gepa,
+            before_cycle=(
+                (lambda _cycle: gateway.ensure_available())
+                if ensure_gateway and gateway
+                else ((lambda _cycle: gateway.is_healthy()) if gateway else None)
+            ),
+            require_healthy_gateway=not allow_heuristic_fallback,
+            gateway_supervised=bool(gateway and gateway.managed),
+            gateway_url=settings.cliproxy_base_url if gateway else None,
+            pre_mortem_routing=pre_mortem_routing,
+        )
+    finally:
+        if gateway is not None:
+            gateway.stop()
+
+    json_path, md_path = _persist_autopilot_report(settings, report)
+
+    table = Table(title="Autopilot Results")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Session", report.session_id)
+    table.add_row("Status", report.status)
+    table.add_row("Cycles", str(report.total_cycles))
+    table.add_row("Successful", str(report.successful_cycles))
+    table.add_row("Promotions", str(report.promoted_cycles))
+    table.add_row("Final Champion", report.final_champion_policy_id or "unknown")
+    table.add_row("JSON Report", str(json_path))
+    table.add_row("Markdown Report", str(md_path))
+    console.print(table)
+
+    if report.notes:
+        console.print(Panel("\n".join(report.notes), title="Autopilot Notes"))
 
 
 if __name__ == "__main__":
