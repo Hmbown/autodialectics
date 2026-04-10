@@ -4,13 +4,13 @@
     "name": "Hmbown"
   },
   "metadata": {
-    "description": "Local Claude Code marketplace for the Autodialectics repository."
+    "description": "Claude Code marketplace for the Autodialectics anti-slop harness."
   },
   "plugins": [
     {
       "name": "autodialectics",
       "source": "./plugins/autodialectics",
-      "description": "Run the local Autodialectics anti-slop harness from Claude Code.",
+      "description": "Anti-slop harness with contracts, evidence, dialectics, verification, and policy evolution.",
       "version": "0.1.0",
       "author": {
         "name": "Hmbown"
