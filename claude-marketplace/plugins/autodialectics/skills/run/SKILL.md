@@ -31,18 +31,36 @@ autodialectics run <task.json>
 
 ## Task File Format
 
-Tasks are JSON files with at minimum:
+Tasks are JSON files. Only `title` is required; everything else has sensible defaults:
 
 ```json
 {
   "title": "Short description",
   "description": "What needs to be done and why",
   "domain": "code|research|writing|experiment|analysis|generic",
+  "objectives": ["What the task must achieve"],
+  "constraints": ["Boundaries the solution must respect"],
+  "deliverables": ["Concrete outputs expected"],
+  "acceptance_criteria": ["How to judge success"],
+  "forbidden_shortcuts": ["Approaches that are explicitly banned"],
   "workspace_root": "path/to/workspace",
   "verification_commands": ["pytest -q"],
+  "max_repair_attempts": 3,
   "assets": [{"kind": "file", "location": "path/to/file", "label": "name"}]
 }
 ```
+
+## Pipeline Stages
+
+`run_task` executes these stages in order, producing one artifact each:
+
+1. **Compile** → `contract.md` — locks the task into an immutable contract
+2. **Explore** → `evidence.json` — gathers evidence relevant to the task
+3. **Plan (Dialectic)** → `dialectic.json` — thesis/antithesis/synthesis resolution
+4. **Execute** → `execution.json` — domain-specific execution (code, research, writing, etc.)
+5. **Verify** → `verification.json` — independent verification of execution results
+6. **Evaluate** → `evaluation.json` — slop scoring and gate decision (accept/reject/revise/rollback)
+7. **Summarize** → `summary.md` — human-readable run summary
 
 ## Guidance
 

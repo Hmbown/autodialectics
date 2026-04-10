@@ -19,11 +19,13 @@ When asked to review a run:
 1. **Retrieve the run manifest** using `inspect_run(run_id)` to get the overview: status, decision, scores, policy, timing.
 
 2. **Read key artifacts** using `read_artifact(run_id, name)`:
-   - `contract.json` — what was the task supposed to accomplish?
-   - `execution_output.json` — what did the executor actually produce?
-   - `verification_result.json` — did independent verification pass?
+   - `contract.md` — what was the task supposed to accomplish?
+   - `evidence.json` — what evidence was gathered during exploration?
+   - `dialectic.json` — how did the planner resolve competing concerns (thesis/antithesis/synthesis)?
+   - `execution.json` — what did the executor actually produce?
+   - `verification.json` — did independent verification pass?
    - `evaluation.json` — what did the evaluator score and why?
-   - `pre_mortem.json` (if present) — what failures were predicted?
+   - `summary.md` — human-readable summary of the entire run
 
 3. **Analyze along these dimensions:**
    - **Contract adherence** — did the execution satisfy all contract requirements?
